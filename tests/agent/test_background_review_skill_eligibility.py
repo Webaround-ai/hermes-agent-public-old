@@ -30,3 +30,18 @@ def test_only_successful_foreground_skill_write_suppresses_review(success):
     assert should_review_skills(agent, messages) is not success
     agent._skill_nudge_interval = 0
     assert not should_review_skills(agent, [{"role": "user"}] + _result("terminal"))
+
+
+@pytest.mark.parametrize("flag", [
+    "_verification_stop_synthetic", "_pre_verify_synthetic", "_kanban_stop_synthetic",
+    "_empty_recovery_synthetic", "_dropped_toolcall_nudge", "_todo_snapshot_synthetic",
+])
+def test_runtime_nudge_keeps_short_tool_evidence_until_genuine_new_user_turn(flag):
+    agent = SimpleNamespace(_skill_nudge_interval=10, _iters_since_skill=1, valid_tool_names={"skill_manage"})
+    messages = [{"role": "user", "content": "Complete this task"}] + _result("terminal") + [
+        {"role": "user", "content": "Verify before finishing", flag: True},
+        {"role": "assistant", "content": "Verified; done"},
+    ]
+    assert should_review_skills(agent, messages)
+    messages.append({"role": "user", "content": "What is the weather?"})
+    assert not should_review_skills(agent, messages)

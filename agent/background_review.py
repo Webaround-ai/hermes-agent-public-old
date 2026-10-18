@@ -26,12 +26,16 @@ def should_review_skills(agent: Any, messages: List[Dict[str, Any]]) -> bool:
     """Cover short tool-backed turns on the existing review rail, without reviewing chatter.
 
     Only paired tool results since the latest owner message count. A successful skill write
-    already covers foreground learning; failed writes must not suppress the review.
+    already covers foreground learning; failed writes must not suppress the review. Runtime
+    verification/recovery scaffolding in user-role rows does not start a new owner turn.
     """
     if getattr(agent, "_skill_nudge_interval", 0) <= 0 or "skill_manage" not in agent.valid_tool_names:
         return False
+    from agent.session_persistence import _is_ephemeral_scaffolding
     start = next((i + 1 for i in range(len(messages) - 1, -1, -1)
-                  if messages[i].get("role") == "user"), len(messages))
+                  if messages[i].get("role") == "user"
+                  and not _is_ephemeral_scaffolding(messages[i])
+                  and not messages[i].get("_todo_snapshot_synthetic")), len(messages))
     calls = {}
     has_work = False
     for message in messages[start:]:
