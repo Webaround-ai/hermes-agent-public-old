@@ -94,6 +94,7 @@ _CAPABILITY_ENDPOINTS = (
     ("session_update", ("PATCH", "/api/sessions/{session_id}")),
     ("session_delete", ("DELETE", "/api/sessions/{session_id}")),
     ("session_messages", ("GET", "/api/sessions/{session_id}/messages")),
+    ("iollo_task_output", ("GET", "/api/sessions/{session_id}/task-output")),
     ("iollo_task_reports", ("POST", "/api/sessions/{session_id}/task-reports")),
     ("session_fork", ("POST", "/api/sessions/{session_id}/fork")),
     ("session_chat", ("POST", "/api/sessions/{session_id}/chat")),
@@ -1613,6 +1614,7 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
             ("PATCH", "/api/sessions/{session_id}", self._handle_patch_session),
             ("DELETE", "/api/sessions/{session_id}", self._handle_delete_session),
             ("GET", "/api/sessions/{session_id}/messages", self._handle_session_messages),
+            ("GET", "/api/sessions/{session_id}/task-output", self._handle_iollo_task_output),
             ("POST", "/api/sessions/{session_id}/task-reports", self._handle_iollo_task_report),
             ("POST", "/api/sessions/{session_id}/fork", self._handle_fork_session),
             ("POST", "/api/sessions/{session_id}/chat", self._handle_session_chat),
@@ -3133,6 +3135,19 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
                 "limit": limit, "offset": offset,
                 "order": order or ("latest" if default_page else "oldest"),
                 "returned": len(messages)}})
+
+    @_require_auth
+    async def _handle_iollo_task_output(self, request: "web.Request") -> "web.Response":
+        """Exact native session output plus canonical scheduled-silence metadata."""
+        response = await self._handle_session_messages(request)
+        if response.status != 200:
+            return response
+        messages = json.loads(response.body).get("data") or []
+        said = [m for m in messages if m.get("role") == "assistant"
+                and isinstance(m.get("content"), str) and m["content"].strip()]
+        last = max(range(len(said)), key=lambda i: (said[i].get("timestamp") or 0, i)) if said else None
+        from gateway.response_filters import autonomous_output
+        return web.json_response(autonomous_output(said[last]["content"] if last is not None else ""))
 
     @_require_auth
     async def _handle_iollo_task_report(self, request: "web.Request") -> "web.Response":

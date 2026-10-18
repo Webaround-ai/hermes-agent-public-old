@@ -144,3 +144,23 @@ def is_partial_silence_marker(text: Any) -> bool:
 
 SILENT_REPLY_TOKEN = "NO_REPLY"
 # ---- END PLUGIN-COMPAT ----
+
+
+
+def autonomous_output(text: str) -> dict:
+    """Native scheduled-output projection; caller still gates suppression on successful execution.
+
+    Preserve meaningful failure prose while removing silence control tokens. Raw execution
+    history is not modified, and the model never supplies the returned control boolean.
+    """
+    import re
+    text = str(text or "")
+    lines = []
+    for line in text.splitlines():
+        if is_intentional_silence_response(line):
+            continue
+        prefix = re.match(r"^\s*(\[[^]\n]+\])\s*", line)
+        if prefix and is_intentional_silence_response(prefix[1]):
+            line = line[prefix.end():]
+        lines.append(line)
+    return {"text": "\n".join(lines).strip(), "silent": is_autonomous_silence_response(text)}

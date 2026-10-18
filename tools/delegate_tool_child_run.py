@@ -67,6 +67,10 @@ def _attach_child(parent_agent: Any, child: Any) -> None:
     landed (a fan-out still building its siblings, a turn that has not reached its iteration check yet)
     would otherwise start with no signal and run to completion as an orphan. Mirror a pending stop here
     so the whole spawn tree dies with its parent."""
+    from agent.cooperative_stop import install_cooperative_stop
+    check = vars(parent_agent).get("_cooperative_stop_check")
+    if check is not None:
+        install_cooperative_stop(child, check)
     if hasattr(parent_agent, "_active_children"):
         _with_children_lock(parent_agent, "append", child)
     if getattr(parent_agent, "_interrupt_requested", False) is not True:
