@@ -359,6 +359,8 @@ def begin_iteration(
     # Reset per-turn checkpoint dedup so each iteration can take one snapshot.
     agent._checkpoint_mgr.new_turn()
 
+    from agent.cooperative_stop import stop_at_iteration_boundary
+    stop_at_iteration_boundary(agent)
     if agent._interrupt_requested:
         interrupted = True
         _issuer = interrupt_issuer(agent)
