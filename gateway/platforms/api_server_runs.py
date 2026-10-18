@@ -1238,7 +1238,7 @@ _APPROVAL_CHOICE_ALIASES = {"approve": "once", "approved": "once", "allow": "onc
 async def _handle_run_approval(self, request: "web.Request", *, _api_server) -> "web.Response":
     """POST /v1/runs/{run_id}/approval — resolve a pending run approval."""
     _openai_error = _api_server._openai_error
-    run_id, _, _, _, err = _load_owned_run(
+    run_id, run_status, _, _, err = _load_owned_run(
         self, request, _api_server=_api_server, permission="approve", active_fallback=False)
     if err is not None:
         return err
@@ -1265,6 +1265,8 @@ async def _handle_run_approval(self, request: "web.Request", *, _api_server) -> 
          "Room approvals can resolve only one exact request", "invalid_approval_scope", 400),
         (room_scoped and not request_id,
          "Room approvals require the exact request_id.", "approval_request_required", 400),
+        (run_status.get("source") == "cron" and not request_id,
+         "Cron approvals require the exact request_id.", "approval_request_required", 400),
         (not approval_session_key,
          f"Run has no active approval session: {run_id}", "approval_not_active", 409)):
         if failed:
