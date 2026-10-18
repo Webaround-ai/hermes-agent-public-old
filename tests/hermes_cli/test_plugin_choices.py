@@ -9,7 +9,7 @@ from hermes_cli import plugins
 from hermes_cli.plugin_choices import first_plugin_choice
 from hermes_cli.plugins import VALID_HOOKS, PluginManager
 
-_CHOOSERS = ("delegation_tier_chooser", "escalate_gate", "busy_input_chooser")
+_CHOOSERS = ("delegation_tier_chooser", "busy_input_chooser")
 
 
 def _install(monkeypatch, hook, *callbacks):
@@ -61,10 +61,10 @@ def test_raising_callback_is_isolated(monkeypatch):
     def boom(**_):
         raise RuntimeError("plugin blew up")
 
-    _install(monkeypatch, "escalate_gate", boom, lambda **_: "a")
-    assert first_plugin_choice("escalate_gate", timeout_s=1, accept=_upper) == "A"
-    _install(monkeypatch, "escalate_gate", boom)
-    assert first_plugin_choice("escalate_gate", timeout_s=1, accept=_upper) is None
+    _install(monkeypatch, "delegation_tier_chooser", boom, lambda **_: "a")
+    assert first_plugin_choice("delegation_tier_chooser", timeout_s=1, accept=_upper) == "A"
+    _install(monkeypatch, "delegation_tier_chooser", boom)
+    assert first_plugin_choice("delegation_tier_chooser", timeout_s=1, accept=_upper) is None
 
 
 def test_slow_plugin_times_out_to_none(monkeypatch):

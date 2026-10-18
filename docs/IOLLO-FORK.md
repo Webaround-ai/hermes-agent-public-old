@@ -38,8 +38,8 @@ Iollo managed boxes use cloud policy and deployment controls rather than the ups
   daemon generation and retries once against the same URL, as a CDP timeout already does; and fork
   brief 041, all off unless configured: `delegation.tiers` / `default_tier` / `tier_chooser_timeout_ms`
   (per-child model + reasoning effort for `delegate_task`, `tools/delegate_tool_tiers.py`), the
-  advice-only `escalate` tool behind `delegation.escalate` (`tools/escalate_tool.py`), and three chooser
-  hooks (`delegation_tier_chooser`, `escalate_gate`, `busy_input_chooser`; `hermes_cli/plugin_choices.py`).
+  advice-only `escalate` tool behind `delegation.escalate` (`tools/escalate_tool.py`), and two chooser
+  hooks (`delegation_tier_chooser`, `busy_input_chooser`; `hermes_cli/plugin_choices.py`).
   Fork brief 043 adds an optional `prompt_version` on `POST /v1/runs` (see "Prompt version" below).
 - The current base is upstream **v2026.9.24**, package version **0.21.5**, commit
   **f97608f178d1ffeca59860195ab7da295f7c8e5f** (the peeled annotated tag), rebased from
@@ -498,3 +498,12 @@ cleaned normally. Explicit shutdown, backend recovery, session tracking and orph
 active. Cloud, independent CDP, real-profile, Lightpanda, Camofox and headless sessions retain their
 existing idle cleanup; the HUMAN takeover exemption remains unchanged. No heartbeat, timer increase,
 lease or additional lifecycle is introduced. This source change is not deployment evidence.
+
+## Direct advice escalation — source change 2026-10-18
+
+`escalate` launches its configured read-only advisor directly, subject to the existing caps.
+The escalation routing gate and append-only parent reasoning upgrade attempt have been removed.
+The parent model, effort and conversation configuration stay unchanged; advisory children retain
+the existing restricted research toolsets and cannot delegate or act. A pinned advisor does not
+inherit the parent fallback chain, and now explicitly disables delegation fallbacks as well.
+Source change only; a rebuilt Hermes base and matching cloud policy are required before rollout.

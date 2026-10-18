@@ -1,5 +1,5 @@
 """Bounded "chooser" hooks: a plugin may pick one value for a decision the core would otherwise take
-from config (``delegation_tier_chooser``, ``escalate_gate``, ``busy_input_chooser``).
+from config (``delegation_tier_chooser``, ``busy_input_chooser``).
 
 Contract shared by every chooser hook:
 - no plugin registered for the hook -> ``None`` at once (no thread, zero cost for unconfigured profiles);
