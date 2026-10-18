@@ -207,24 +207,24 @@ are true:
 2. Its name is **not** in `~/.hermes/skills/.hub/lock.json` (hub-installed skills).
 3. Its `.usage.json` entry has `"created_by": "agent"` or `"agent_created": true`.
 
-Currently, only the **background self-improvement review fork** sets this marker
-— when it creates a new umbrella skill during its periodic review pass (~every 10
-agent turns). The background fork runs with a write origin of `"background_review"`
-(via `tools/skill_provenance.py`), which is the only path that triggers the
-`mark_agent_created()` call in `skill_manage`.
+New skills authored through `skill_manage(action="create")` are marked agent-created in
+both foreground conversations (including `/learn`) and background review. A foreground
+creation can therefore receive later evidence-backed improvements. A successful foreground
+skill write avoids a duplicate end-of-turn skill review.
 
-Skills the foreground agent creates via `skill_manage(action="create")` during a
-conversation (including `/learn`) are **not** marked as agent-created — they are
-recorded as `created_by: learn`, which makes them show up in the
-[learning journey](./memory.md#learning-journey-journey) right away but is not a
-curator opt-in. They are considered user-directed and the curator intentionally
-leaves them alone.
+Automatic review uses the existing after-delivery background fork for turns with actual tool
+results, including short tasks. Skill/memory bookkeeping and no-tool chatter do not trigger
+skill review. `skills.creation_nudge_interval: 0` still disables it; positive values enable
+this tool-evidence eligibility rather than imposing a minimum number of iterations. This
+increases review calls for short tool-backed turns; existing budgets, cancellation and
+`skip_background_review` remain in effect. A review without useful learning makes no write.
 
 :::warning Your hand-written skills are NOT curated
 If you manually created a `SKILL.md` or pointed Hermes at an external skill
 directory, that skill will have a `.usage.json` entry with `created_by: null`
 (or the field absent). The curator will not touch it. The same applies to
-skills the foreground agent created at your request (`created_by: learn`).
+historical foreground creations with `created_by: learn`: this change does not adopt them.
+Pinned, shipped, installed and externally owned skills retain their existing protection.
 
 **To see which skills the curator actually manages**, run `hermes curator status`.
 If the agent-created count is 0, no skills are currently in the curator's
@@ -256,8 +256,8 @@ for one of two reasons:
   it carries no provenance signal at all. Authorship is genuinely unknowable
   from the record.
 - **foreground-created** — a foreground `skill_manage(create)` recorded
-  `created_by: learn` (older records: unset) by design, since skills you ask for
-  belong to you.
+  `created_by: learn` (older records: unset) under the earlier policy. Those
+  historical records remain unmanaged until explicitly adopted.
 
 A large library can therefore look fully curated while most of it is
 untouchable. `adopt` closes that gap by **declaration**:

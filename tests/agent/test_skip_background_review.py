@@ -60,7 +60,7 @@ def _stub_agent_for_finalize(agent: AIAgent) -> None:
     agent._db_flush_scan_prefix = None
 
 
-def _run_finalize(agent: AIAgent) -> None:
+def _run_finalize(agent: AIAgent, *, messages=None, review_memory=True) -> None:
     """Call finalize_turn with conditions that would trigger background review."""
     finalize_turn(
         agent,
@@ -68,13 +68,13 @@ def _run_finalize(agent: AIAgent) -> None:
         api_call_count=1,
         interrupted=False,
         failed=False,
-        messages=[{"role": "assistant", "content": "ok"}],
+        messages=messages if messages is not None else [{"role": "assistant", "content": "ok"}],
         conversation_history=[],
         effective_task_id="test",
         turn_id="test-turn",
         user_message="test",
         original_user_message="test",
-        _should_review_memory=True,
+        _should_review_memory=review_memory,
         _turn_exit_reason="text_response(1)",
     )
 
@@ -136,3 +136,18 @@ def test_persistence_failure_error_fallback_is_pinned_and_leaves_final_response_
     assert f"`hermes {selector}doctor`" in result["error"]
     assert agent._sync_external_memory_for_turn.call_args.kwargs["final_response"] == ""
     agent._spawn_background_review.assert_not_called()
+
+
+def test_short_tool_turn_reviews_skills_after_delivery_without_memory_trigger():
+    agent = _make_agent()
+    _stub_agent_for_finalize(agent)
+    agent._iters_since_skill = 1
+    _run_finalize(agent, review_memory=False, messages=[
+        {"role": "user", "content": "Inspect it"},
+        {"role": "assistant", "tool_calls": [{"id": "observed", "function": {"name": "terminal"}}]},
+        {"role": "tool", "tool_call_id": "observed", "content": "Observed result"},
+        {"role": "assistant", "content": "ok"},
+    ])
+    agent._spawn_background_review.assert_called_once()
+    assert agent._spawn_background_review.call_args.kwargs["review_skills"] is True
+    assert agent._spawn_background_review.call_args.kwargs["review_memory"] is False

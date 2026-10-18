@@ -174,6 +174,13 @@ def _background_review_write_guard(
             f"are off-limits to autonomous maintenance. Ask the user to run `hermes curator "
             f"unpin {name}` if they want it changed.")
     try:
+        from agent.skill_utils import parse_frontmatter
+        metadata, _ = parse_frontmatter((skill_dir / "SKILL.md").read_text(encoding="utf-8"))
+        if metadata.get("owner") is True or metadata.get("pinned") is True or metadata.get("created_by") == "owner":
+            return _refusal(f"{refuse} skill '{name}': explicit owner protection in SKILL.md.")
+    except (OSError, ValueError, TypeError):
+        return _refusal(f"{refuse} skill '{name}': ownership metadata could not be read.")
+    try:
         from agent.skill_utils import is_external_skill_path
         if is_external_skill_path(skill_dir):
             return _refusal(
@@ -189,19 +196,9 @@ def _background_review_write_guard(
             (skill_usage.is_bundled, "bundled")):
             if predicate(name):
                 return _refusal(f"{refuse} {label} skill '{name}'.")
-        # Not curator-managed (no `created_by: "agent"`) => user-owned. A MISSING
-        # record and an explicit `created_by: null` must resolve IDENTICALLY (keying
-        # on presence made the policy depend on the guard's own side effect: the
-        # first write created a null record, the next identical write was refused).
+        # Missing and explicitly unknown provenance both fail closed. New agent-authored
+        # foreground creations are marked at creation; patches never adopt old skills.
         usage_rec = skill_usage.load_usage().get(name)
-        # Skills that are not curator-managed are off-limits to autonomous curation. This prevents the LLM
-        # consolidation pass from mutating skills the user owns (manually authored, URL-installed, or
-        # created by a foreground `skill_manage(create)` at the user's request), which lack the `created_by:
-        # "agent"` marker. Keying on `isinstance(usage_rec, dict)` made the policy depend on the guard's own
-        # side effect: a local skill with no telemetry record passed, the successful write called
-        # bump_patch() which created a `created_by: null` record, and the very same write was refused from
-        # then on. "Allowed exactly once" is not a policy — it is a race with our own bookkeeping. Fail
-        # closed for both shapes; `hermes curator adopt <name>` is the supported way in. See #67140.
         if not skill_usage._is_curator_managed_record(usage_rec):
             _detail = (f"created_by={usage_rec.get('created_by')!r}" if isinstance(usage_rec, dict)
                        else "no usage record")

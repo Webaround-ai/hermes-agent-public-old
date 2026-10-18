@@ -72,3 +72,22 @@ or maintaining another silence matcher. Raw native execution history remains int
 cooperative withdrawal; explicit native resume clears it for future work. Owner task cancellation supersedes a
 previously accepted direction, and only a native `stopped_before_action` execution-ledger proof permits a
 single claimed automatic continuation.
+
+
+## Native evidence-backed learning (source change, 2026-10-18)
+
+On `codex/native-advice-escalation` based on `e4a6703a73`, skill guidance loads materially
+applicable skills and automatically saves useful lessons, without requiring a write from
+every review. Generic Hermes help remains subordinate to host product policy. Working
+methods require observed evidence and private session/tool references; confirmed, owner-assisted,
+and unknown outcomes stay distinct. Unknown outcomes may retain a bounded pitfall.
+
+The existing after-delivery review fork also covers short turns with actual tool results,
+excluding skill/memory bookkeeping and successful foreground skill writes. No-tool chatter
+is skipped. Positive `creation_nudge_interval` enables this eligibility; zero disables it.
+This adds review calls for short tool-backed tasks; existing budgets, live-turn cancellation,
+and `skip_background_review` apply. Both native and Codex app-server finalizers share the
+predicate. New `skill_manage(create)` creations are agent-authored in foreground and background;
+existing unknown or owner provenance is never automatically adopted. Pinned, shipped,
+installed and externally owned skills keep their protection. This is source evidence only;
+a new runtime image and rollout are required before deployed behavior changes.

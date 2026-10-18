@@ -607,11 +607,8 @@ def _finish_codex_turn(agent, turn, messages: List[Dict[str, Any]], *, original_
     agent._iters_since_skill = getattr(agent, "_iters_since_skill", 0) + turn.tool_iterations
     _record_codex_app_server_compaction(agent, turn)
     usage_result = _record_codex_app_server_usage(agent, turn, messages=messages)
-    # Skill nudge check AFTER iters were incremented (same as chat_completions).
-    should_review_skills = (0 < agent._skill_nudge_interval <= agent._iters_since_skill
-                            and "skill_manage" in agent.valid_tool_names)
-    if should_review_skills:
-        agent._iters_since_skill = 0
+    from agent.background_review import should_review_skills as skill_review_due
+    should_review_skills = skill_review_due(agent, messages)
     # External memory sync skipped on interrupt/error (no partial transcripts).
     if not turn.interrupted and turn.error is None:
         _call_guarded(getattr(agent, "_sync_external_memory_for_turn", None), "external memory sync raised", kwargs=dict(
