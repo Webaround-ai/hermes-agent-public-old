@@ -3143,6 +3143,15 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
         if response.status != 200:
             return response
         messages = json.loads(response.body).get("data") or []
+        execution_id = request.query.get("execution_id")
+        if execution_id:
+            from cron.executions import get_execution
+            execution = await asyncio.to_thread(get_execution, execution_id)
+            if not execution or execution.get("session_id") != request.match_info["session_id"]:
+                return _error_response("Task output execution does not match native session", 409)
+            from datetime import datetime
+            boundary = datetime.fromisoformat(execution.get("started_at") or execution["claimed_at"]).timestamp()
+            messages = [m for m in messages if isinstance(m.get("timestamp"), (int, float)) and m["timestamp"] >= boundary]
         said = [m for m in messages if m.get("role") == "assistant"
                 and isinstance(m.get("content"), str) and m["content"].strip()]
         last = max(range(len(said)), key=lambda i: (said[i].get("timestamp") or 0, i)) if said else None
@@ -3873,6 +3882,13 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
                 if prompt_err:
                     return prompt_err
                 extra_prompt = extra_prompt or None
+        if isinstance(body, dict) and body.get("resume_execution_id") is not None:
+            from cron.jobs import continue_job
+            execution_id, request_id = body.get("resume_execution_id"), body.get("request_id")
+            if not isinstance(execution_id, str) or not isinstance(request_id, str) or not extra_prompt:
+                return _error_response("Continuation requires execution, request id and direction", 400)
+            return self._job_response(
+                lambda jid: continue_job(jid, execution_id, request_id, extra_prompt), job_id, notify=False)
         return self._job_response(
             lambda jid: _cron_trigger(jid, extra_prompt=extra_prompt), job_id, notify=False)
 

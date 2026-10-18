@@ -1939,7 +1939,7 @@ def _raise_inactivity_timeout(agent, job_name: str, limit_s: float) -> None:
 
 def _run_agent_with_watchdog(
     agent, prompt: str, job: dict, job_id: str, job_name: str, task_id: str, cancel_event,
-    worker_state: Optional[dict] = None,
+    worker_state: Optional[dict] = None, conversation_history: Optional[list] = None,
 ) -> dict:
     """Run ``agent.run_conversation`` on a worker thread under the inactivity (not wall-clock)
     watchdog: default 600s, override HERMES_CRON_TIMEOUT, 0 = unlimited."""
@@ -1999,8 +1999,9 @@ def _run_agent_with_watchdog(
     _cron_pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
     # Carry scheduler-scoped ContextVar state (e.g. env passthrough) into the worker thread.
     _cron_context = contextvars.copy_context()
+    _resume_kwargs = {"conversation_history": conversation_history} if conversation_history is not None else {}
     _cron_future = _cron_pool.submit(
-        _cron_context.run, agent.run_conversation, prompt, task_id=task_id)
+        _cron_context.run, agent.run_conversation, prompt, task_id=task_id, **_resume_kwargs)
     if worker_state is not None:
         worker_state["future"] = _cron_future
     _inactivity_timeout = False
@@ -2554,6 +2555,17 @@ class _FireAudit:
 
 
 
+def _resume_cron_context(session_db, intent):
+    """Reuse native CLI resume resolution and transcript projection; never synthesize history."""
+    if session_db is None or not isinstance(intent, dict) or not intent.get("session_id"):
+        raise RuntimeError("Native task continuation history is unavailable")
+    from hermes_cli.oneshot import _load_resume_target
+    target, history, _meta = _load_resume_target(session_db, intent["session_id"])
+    if not history:
+        raise RuntimeError("Native task continuation history is empty")
+    return target, history
+
+
 def run_job(
     job: dict, *, defer_agent_teardown: Optional[list] = None, extra_prompt: Optional[str] = None,
     cancel_event: Optional[_CancelEventLike] = None, execution_id: Optional[str] = None,
@@ -2607,6 +2619,13 @@ def run_job(
 
         # Open state.db only after every early-return gate has passed.
         _session_db = _open_cron_session_db(job)
+        resume_history = None
+        if job.get("manual_resume") and job.get("manual_run_at"):
+            _cron_session_id, resume_history = _resume_cron_context(_session_db, job["manual_resume"])
+            prompt = job["manual_resume"]["prompt"]
+        if execution_id:
+            from cron.executions import bind_execution_session
+            bind_execution_session(execution_id, _cron_session_id)
         agent = _construct_cron_agent(
             AIAgent, job, _cfg, setup, workdir=scope.workdir, session_id=_cron_session_id,
             session_db=_session_db)
@@ -2623,7 +2642,8 @@ def run_job(
         with _cron_run_approval_bridge(_cron_session_id):
             result = _run_agent_with_watchdog(
                 agent, prompt, job, job_id, job_name, scope.task_id, cancel_event,
-                worker_state=_worker_state)
+                worker_state=_worker_state, **({"conversation_history": resume_history}
+                                              if resume_history is not None else {}))
         from agent.cooperative_stop import stopped_before_action, STOPPED_BEFORE_ACTION
         if stopped_before_action(agent):
             from cron.executions import confirm_stop_before_action
@@ -2678,6 +2698,14 @@ def run_job(
         scope.exit()
         if _session_db and not _worker_teardown_deferred:
             _finalize_cron_session(_session_db, agent, job_id, job_name, _cron_session_id)
+        if execution_id:
+            from cron.executions import confirm_continuation_ready
+            if _worker_teardown_deferred:
+                _ready_context = contextvars.copy_context()
+                _worker_state["future"].add_done_callback(
+                    lambda _done: _ready_context.run(confirm_continuation_ready, execution_id))
+            else:
+                confirm_continuation_ready(execution_id)
         # Tear down the ephemeral agent or the gateway leaks fds per tick (EMFILE). With deferred
         # teardown, hand the live agent back: delivery needs a live async client.
         # Release subprocesses, terminal sandboxes, browser daemons, and the main OpenAI/httpx client held

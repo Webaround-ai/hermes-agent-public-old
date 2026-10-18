@@ -89,6 +89,8 @@ def _initialize_schema(conn: sqlite3.Connection) -> None:
     add_column_if_missing(conn, "executions", "stopped_before_action",
                           "stopped_before_action INTEGER NOT NULL DEFAULT 0")
     add_column_if_missing(conn, "executions", "scheduled_instant", "scheduled_instant TEXT")
+    add_column_if_missing(conn, "executions", "session_id", "session_id TEXT")
+    add_column_if_missing(conn, "executions", "continuation_ready", "continuation_ready INTEGER NOT NULL DEFAULT 0")
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_executions_occurrence "
         "ON executions(job_id, scheduled_instant) WHERE status='completed'"
@@ -280,6 +282,23 @@ def mark_execution_running(execution_id: str) -> Optional[Dict[str, Any]]:
         record = _fetch(conn, execution_id)
     _emit_execution_state(record)
     return record
+
+
+def bind_execution_session(execution_id: str, session_id: str) -> None:
+    """Bind the native context before running tools; only the live execution owner may write it."""
+    with _transaction() as conn:
+        cur = conn.execute("UPDATE executions SET session_id=? WHERE id=? "
+                           "AND status IN ('claimed','running') AND process_id=? AND pid=?",
+                           (session_id, execution_id, _PROCESS_ID, os.getpid()))
+        if cur.rowcount != 1:
+            raise RuntimeError("Execution session ownership was lost")
+
+
+def confirm_continuation_ready(execution_id: str) -> None:
+    """The native run future returned; no detached tool execution remains in this attempt."""
+    with _transaction() as conn:
+        conn.execute("UPDATE executions SET continuation_ready=1 WHERE id=? AND process_id=? AND pid=?",
+                     (execution_id, _PROCESS_ID, os.getpid()))
 
 
 def confirm_stop_before_action(execution_id: str) -> bool:

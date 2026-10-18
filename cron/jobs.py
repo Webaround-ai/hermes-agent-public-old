@@ -2143,6 +2143,49 @@ def trigger_job(job_id: str, extra_prompt: Optional[str] = None) -> Optional[Dic
     })
 
 
+def continue_job(job_id: str, execution_id: str, request_id: str, prompt: str) -> Optional[Dict[str, Any]]:
+    """Admit one continuation on the existing job, durably idempotent across lost replies."""
+    from cron.executions import get_execution, latest_execution, _owner_is_live
+    if not request_id or len(request_id) > 200 or not execution_id or not prompt:
+        raise ValueError("Continuation requires execution, request id and direction")
+    def apply(jobs, _i, job):
+        prior_requests = dict(job.get("continuation_requests") or {})
+        accepted = prior_requests.get(request_id) or {}
+        if accepted:
+            if accepted.get("execution_id") != execution_id or accepted.get("prompt") != prompt:
+                raise ValueError("Continuation request id conflicts with its accepted content")
+            return _normalize_job_record(job)
+        previous = get_execution(execution_id)
+        latest = latest_execution(job["id"])
+        owner_gone = previous and not _owner_is_live(previous["pid"], previous.get("process_started_at"))
+        safe_terminal = previous and previous.get("status") in ("completed", "failed", "unknown") and (
+            owner_gone or bool(previous.get("continuation_ready")))
+        if (not previous or previous.get("job_id") != job["id"] or not latest
+                or latest["id"] != execution_id or not safe_terminal or not previous.get("session_id")):
+            raise ValueError("Continuation requires the latest terminal native context")
+        now = _hermes_now()
+        if (_claim_is_live(job.get("run_claim"), now, _oneshot_run_claim_ttl_seconds())
+                or _claim_is_live(job.get("fire_claim"), now, FIRE_CLAIM_TTL_SECONDS)):
+            raise ValueError("Cannot continue over a live run claim")
+        intent = {"request_id": request_id, "execution_id": execution_id,
+                  "session_id": previous["session_id"], "prompt": prompt}
+        at = now.isoformat()
+        if (job.get("schedule") or {}).get("kind") == "once":
+            schedule = parse_schedule(at)
+            job["schedule"] = schedule
+            repeat = dict(job.get("repeat") or {})
+            repeat["completed"] = 0
+            job["repeat"] = repeat
+        prior_requests[request_id] = intent
+        job.update(continuation=intent, continuation_requests=prior_requests, manual_resume=intent, manual_run_prompt=prompt,
+                   manual_run_at=at, next_run_at=at, enabled=True, state="scheduled",
+                   stop_requested=False, paused_at=None, paused_reason=None, run_claim=None, fire_claim=None)
+        job.pop("pending_slot", None)
+        save_jobs(jobs)
+        return _normalize_job_record(job)
+    return _with_job(job_id, apply)
+
+
 def _claim_owner_is_dead(claim: Dict[str, Any]) -> bool:
     """True when the claim's ``by`` names a process on THIS host that provably no longer exists.
     ``_machine_id()`` stamps ``host:pid[:token]``; a foreign host, an explicit HERMES_MACHINE_ID,
@@ -2300,6 +2343,7 @@ def _record_run_outcome(
     job.pop("manual_run_at", None)
     # The transient manual-run context is single-fire: the run that just completed consumed it.
     job.pop("manual_run_prompt", None)
+    job.pop("manual_resume", None)
     delivery_failed = isinstance(delivery_error, str) and bool(delivery_error.strip())
     job["last_status"] = status or (
         "error" if not success else ("delivery_failed" if delivery_failed else "ok"))
