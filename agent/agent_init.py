@@ -1338,7 +1338,7 @@ def _init_memory(agent, _agent_cfg, skip_memory, platform, memory_manager=None):
 
 
 def _apply_agent_section(agent, _agent_cfg):
-    # Skills config: nudge interval for skill creation reminders
+    # Compatibility knob: <=0 disables skill review; positive enables tool-evidence eligibility.
     agent._skill_nudge_interval = 10
     with suppress(Exception):
         agent._skill_nudge_interval = int(_agent_cfg.get("skills", {}).get("creation_nudge_interval", 10))

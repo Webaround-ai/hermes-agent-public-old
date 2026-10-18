@@ -1,7 +1,7 @@
-"""Skill write-origin provenance: a ContextVar separating background-review skill writes from foreground
-user-directed writes (the curator only curates skills the self-improvement review fork created; skills a user
-asked for belong to the user). run_agent.py binds the origin before each tool loop, mirroring
-AIAgent._memory_write_origin: ``token = set_current_write_origin(...)`` / ``reset_current_write_origin(token)``."""
+"""Skill write-origin ContextVar for background-only protection and read-before-write guards.
+Agent-authored skill_manage creations are eligible for maintenance in either origin; origin alone
+never adopts existing owner-authored or unknown skills. The turn loop binds and resets the origin.
+"""
 
 import contextvars
 

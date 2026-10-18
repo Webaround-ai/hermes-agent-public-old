@@ -168,11 +168,12 @@ DEFAULT_AGENT_IDENTITY = (
 
 HERMES_AGENT_HELP_GUIDANCE = (
     # Injected only when skill_view exists AND the hermes-agent skill is installed (system_prompt.py slot
-    # resolution). No "when the two differ" clause: docs-are-authoritative already carries the precedence.
+    # resolution). Host product rules govern managed deployments.
     "You run on Hermes Agent (by Nous Research). When the user needs help with Hermes itself — configuring, "
     "setting up, using, extending, or troubleshooting it — or when you need to understand your own features, "
     "tools, or capabilities, the documentation at https://hermes-agent.nousresearch.com/docs is your "
-    "authoritative reference and always holds the latest, most up-to-date information. The `hermes-agent` "
+    "reference for upstream Hermes behavior. Host product instructions and managed configuration take "
+    "precedence; do not apply upstream setup or policy changes that conflict with them. The `hermes-agent` "
     "skill has the actual commands and proven workflows — load it with skill_view(name='hermes-agent') "
     "before configuring, modifying, or troubleshooting Hermes so you don't guess or invent workarounds."
 )
@@ -182,7 +183,8 @@ HERMES_AGENT_HELP_GUIDANCE_NO_SKILLS = (
     "You run on Hermes Agent (by Nous Research). When the user needs help with Hermes itself — configuring, "
     "setting up, using, extending, or troubleshooting it — or when you need to understand your own features, "
     "tools, or capabilities, the documentation at https://hermes-agent.nousresearch.com/docs is the "
-    "authoritative reference and always holds the latest, most up-to-date information. Point the user there "
+    "reference for upstream Hermes behavior. Host product instructions and managed configuration take "
+    "precedence over upstream setup and policy guidance. Point the user there "
     "(or read it yourself if you have a way to fetch web content)."
 )
 
@@ -255,6 +257,10 @@ SESSION_SEARCH_GUIDANCE = (
 # the compaction-pruning contract lives here — nothing else teaches it.
 SKILLS_GUIDANCE = (
     "When you work out a non-trivial workflow, record it with skill_manage for future reuse.\n\n"
+    "Save only useful new lessons, including after short substantive work; no write is needed "
+    "without new learning. Working methods require observed verification, with autonomous, "
+    "owner-assisted, or unknown outcomes kept distinct. Unknown outcomes support only bounded "
+    "pitfalls, not successful recipes. Preserve protected ownership.\n\n"
     "## Skill Safety Rule\n"
     "A skill placeholder containing `[SKILL_PRUNED]` lost its content in context compression and is inaccessible — "
     "reload it with skill_view(name='...') before acting on anything that depends on it. After reloading, ignore any "
@@ -1382,23 +1388,23 @@ def _render_skills_index(
         )
     return (
         "## Skills\n"
-        "Before replying, scan the skills below. If a skill matches or is even partially relevant to your "
-        "task, you MUST load it with skill_view(name) and follow its instructions. Err on the side of "
-        "loading — it is always better to have context you don't need than to miss critical steps, pitfalls, "
-        "or established workflows. Skills contain specialized knowledge — API endpoints, tool-specific "
-        "commands, and proven workflows that outperform general-purpose approaches. Load the skill "
-        f"even if you think you could handle the task with basic tools like {_basic_tools}. "
-        "Skills also encode the user's preferred approach, conventions, and quality standards for tasks like "
-        "code review, planning, and testing — load them even for tasks you already know how to do, because "
-        "the skill defines how it should be done here.\n"
-        "If a skill has issues, fix it with skill_manage(action='patch').\n"
-        "After difficult/iterative tasks, offer to save as a skill. If a skill you loaded was missing steps, "
-        "had wrong commands, or needed pitfalls you discovered, update it before finishing.\n"
+        "Before replying, scan the skills below. Load a skill with skill_view(name) when its scope "
+        "directly governs the task or it supplies useful specialized knowledge, workflow, or user "
+        "preferences. Follow applicable skill instructions subject to host product rules. A superficial "
+        "keyword overlap does not require a load. Relevant skills remain useful even when you already "
+        f"know how to do the task with {_basic_tools}.\n"
+        "When work yields a useful, reusable lesson, save it automatically with skill_manage before "
+        "finishing, including after a short substantive task. Patch a relevant agent-created skill "
+        "before creating another. Preserve owner-authored, pinned, shipped, installed, and externally "
+        "owned skills; inspect provenance before editing and never infer ownership from a load. "
+        "Save working methods only with observed outcome evidence; distinguish autonomous completion, "
+        "owner-assisted completion, and unknown outcomes. Unknown outcomes may support a bounded pitfall, "
+        "never a successful recipe. If there is no useful new lesson, no write is needed.\n"
         "\n"
         "<available_skills>\n"
         + "\n".join(index_lines) + "\n"
         "</available_skills>\n\n"
-        "Only proceed without loading a skill if genuinely none are relevant to the task."
+        "Proceed without a skill load when none directly governs or materially helps the task."
         + hidden_note
     )
 

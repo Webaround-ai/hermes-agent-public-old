@@ -514,24 +514,15 @@ class TestSkillManageDispatcher:
         assert ok["success"] is True
 
     def test_full_create_via_dispatcher(self, tmp_path):
-        """Foreground create does NOT mark the skill as agent-created.
-
-        Skills created by user-directed foreground turns belong to the user;
-        only the background self-improvement review fork should mark its
-        own sediment as agent-created (so the curator can later consolidate
-        or prune it).
-        """
+        """Agent-authored foreground creations remain eligible for later improvement."""
         with _skill_dir(tmp_path):
             raw = skill_manage(action="create", name="test-skill", content=VALID_SKILL_CONTENT)
             from tools.skill_usage import load_usage
             usage = load_usage()
         result = json.loads(raw)
         assert result["success"] is True
-        # Foreground create carries the "learn" learning-signal marker — never the
-        # curator-management opt-in ("agent"), and the record may be missing
-        # entirely (telemetry best-effort).
-        rec = usage.get("test-skill") or {}
-        assert rec.get("created_by") in {"learn", None, "", False}
+        assert usage["test-skill"]["created_by"] == "agent"
+
 
 
 
@@ -882,6 +873,35 @@ class TestBackgroundOwnershipPolicyConsistency:
                     old_string="Do the thing.", new_string="Do the new thing.",
                 ))
         assert res["success"] is True
+
+    @pytest.mark.parametrize("pinned", [False, True])
+    def test_new_foreground_creation_is_maintainable_unless_pinned(self, tmp_path, monkeypatch, pinned):
+        """Real creation provenance admits review, but never overrides explicit owner protection."""
+        from tools import skill_usage
+
+        home = tmp_path / ".hermes"
+        skills = home / "skills"
+        skills.mkdir(parents=True)
+        monkeypatch.setenv("HERMES_HOME", str(home))
+        with _skill_dir(skills):
+            created = json.loads(skill_manage(action="create", name="new-learning", content=VALID_SKILL_CONTENT))
+            assert created["success"]
+            if pinned:
+                skill_usage.set_pinned("new-learning", True)
+            result = self._bg_patch(skills, "new-learning", "Do the thing.", "Verify the result.")
+            body = (skills / "new-learning" / "SKILL.md").read_text()
+        assert result["success"] is not pinned
+        assert ("Verify the result." in body) is not pinned
+
+    @pytest.mark.parametrize("protection", ["owner: true", "pinned: true", "created_by: owner"])
+    def test_owner_metadata_overrides_agent_creation(self, tmp_path, monkeypatch, protection):
+        monkeypatch.setenv("HERMES_HOME", str(tmp_path / ".hermes"))
+        with _skill_dir(tmp_path):
+            content = VALID_SKILL_CONTENT.replace("name: test-skill", "name: test-skill\n" + protection)
+            assert json.loads(skill_manage(action="create", name="protected", content=content))["success"]
+            result = self._bg_patch(tmp_path, "protected", "Do the thing.", "Replace owner content.")
+        assert not result["success"]
+        assert "owner protection" in result["error"]
 
     def test_adopted_skill_becomes_writable_by_autonomous_curation(self, tmp_path, monkeypatch):
         """Adoption is the documented path from refused to allowed."""

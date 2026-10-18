@@ -613,3 +613,21 @@ def test_skill_file_lock_is_reentrant_in_thread_and_exclusive_across_threads(tmp
         assert not other_done.wait(timeout=0.2), "second thread acquired a held lock"
     t.join(timeout=2)
     assert entered.is_set() and other_done.is_set()
+
+
+def test_explicit_ownership_overrides_legacy_agent_marker():
+    from tools.skill_usage import _is_curator_managed_record
+    for owner in ("owner", "installed"):
+        assert not _is_curator_managed_record({"created_by": owner, "agent_created": True})
+    assert _is_curator_managed_record({"created_by": "agent"})
+
+
+def test_owner_protected_agent_skill_never_enters_lifecycle_candidates(skills_home):
+    from tools import skill_usage
+    skill = _write_skill(skills_home / "skills", "protected")
+    skill_usage.record_created("protected", agent_created=True)
+    assert "protected" in skill_usage.list_agent_created_skill_names()
+    source = skill / "SKILL.md"
+    source.write_text(source.read_text().replace("name: protected", "name: protected\nowner: true"))
+    assert "protected" not in skill_usage.list_agent_created_skill_names()
+    assert not skill_usage.is_curation_eligible("protected")

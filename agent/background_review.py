@@ -21,6 +21,45 @@ from agent.thread_scoped_output import thread_scoped_silence
 
 logger = logging.getLogger(__name__)
 
+
+def should_review_skills(agent: Any, messages: List[Dict[str, Any]]) -> bool:
+    """Cover short tool-backed turns on the existing review rail, without reviewing chatter.
+
+    Only paired tool results since the latest owner message count. A successful skill write
+    already covers foreground learning; failed writes must not suppress the review. Runtime
+    verification/recovery scaffolding in user-role rows does not start a new owner turn.
+    """
+    if getattr(agent, "_skill_nudge_interval", 0) <= 0 or "skill_manage" not in agent.valid_tool_names:
+        return False
+    from agent.session_persistence import _is_ephemeral_scaffolding
+    start = next((i + 1 for i in range(len(messages) - 1, -1, -1)
+                  if messages[i].get("role") == "user"
+                  and not _is_ephemeral_scaffolding(messages[i])
+                  and not messages[i].get("_todo_snapshot_synthetic")), len(messages))
+    calls = {}
+    has_work = False
+    for message in messages[start:]:
+        if message.get("role") == "assistant":
+            for call in message.get("tool_calls") or []:
+                calls[call.get("id")] = (call.get("function") or {}).get("name")
+        if message.get("role") != "tool":
+            continue
+        name = calls.get(message.get("tool_call_id"))
+        if name == "skill_manage":
+            try:
+                result = json.loads(message.get("content") or "{}")
+            except (TypeError, ValueError):
+                result = None
+            if isinstance(result, dict) and result.get("success") is True:
+                agent._iters_since_skill = 0
+                return False
+        elif name and name not in {"memory", "skills_list", "skill_view"}:
+            has_work = True
+    if has_work:
+        agent._iters_since_skill = 0
+    return has_work
+
+
 _BACKGROUND_REVIEW_CANCEL_TIMEOUT_SECONDS = 2.0
 
 
@@ -365,6 +404,11 @@ _LESSON_LAYER_BLOCK = (
     "order, the user's preferences for how the result should look, and the pitfalls that cost time. "
     "A future session should be able to follow it and produce what the user wants on the first "
     "try. Everything below is about writing that well:\n"
+    "  • Evidence: retain a compact source reference (originating session and tool-result/call ID "
+    "when available) and outcome=confirmed, assisted, or unknown beside each learned method. "
+    "Confirmed requires observed execution and verification; assisted records required owner action. "
+    "Run completion alone is not verification. Keep these references in the owner-private skill, "
+    "without copying raw transcripts, credentials, or personal content.\n"
     "  • Procedure first: the steps in the order they are done, with the concrete commands, tool "
     "calls, and decision points. Lessons and pitfalls attach to the step they affect.\n"
     "  • A pitfall is a generalizable rule + one clause of WHY (the mechanism), imperative. 'Grep the "
@@ -402,26 +446,24 @@ _DO_NOT_CAPTURE_BLOCK = (
     "retrying worked, the lesson is the retry pattern, not the original failure.\n"
     "  • One-off task narratives. A user asking 'summarize today's market' or 'analyze this PR' is "
     "not a class of work that warrants a skill.\n\n"
-    "  • Unresolved failures: if the session ended WITHOUT actually finding a working method — you "
-    "tried several things, none worked, and told the user to check manually — do NOT write those "
-    "attempts up as a 'reliable workflow' or 'recommended approach'. That presents an untested "
-    "sequence of failures as validated guidance a future session will trust and repeat. Either say "
-    "'Nothing to save', or, only if you are independently confident of a real working alternative "
-    "(not something you are merely guessing might work), capture ONLY that alternative — never the "
-    "dead ends, and never dressed up as best practice.\n\n"
+    "  • Successful recipes without observed evidence. A plausible alternative, an attempted action, "
+    "or a confident final reply does not prove success. Label the outcome autonomous (the agent "
+    "completed and verified it), owner-assisted (the owner completed a required step), or unknown "
+    "(completion was not observed). Never turn owner-assisted work into an autonomous recipe. "
+    "An unknown outcome may justify a bounded, evidenced pitfall or diagnostic check, but not a "
+    "working method. Keep uncertainty and required owner steps explicit.\n\n"
     "If a tool failed because of setup state, capture the FIX (install command, config step, env "
     "var to set) under an existing setup or troubleshooting skill — never 'this tool does not "
     "work' as a standalone constraint.\n\n"
 )
 
 _SKILL_REVIEW_PROMPT = (
-    "Review the conversation above and update the skill library. Be ACTIVE — most sessions produce "
-    "at least one skill update, even if small. A pass that does nothing is a missed learning "
-    "opportunity, not a neutral outcome.\n\n"
+    "Review the conversation above for useful, reusable learning. Save a supported lesson "
+    "automatically when one exists; a review with no new lesson should make no write.\n\n"
     "Target shape of the library: CLASS-LEVEL skills, each with a SKILL.md of always-on rules and a "
     "small `references/` set of topical depth. Not a flat list of narrow one-session skills, and "
-    "not an umbrella hoarding a references/ file per session. This shapes HOW you update, not "
-    "WHETHER you update.\n\n" + _LESSON_LAYER_BLOCK +
+    "not an umbrella hoarding a references/ file per session. This determines the shape of a "
+    "supported update; it does not require an update without new evidence.\n\n" + _LESSON_LAYER_BLOCK +
     "Signals to look for (any one of these warrants action):\n"
     "  • User corrected your style, tone, format, legibility, or verbosity. Frustration signals "
     "like 'stop doing X', 'this is too verbose', 'don't format like this', 'why are you "
@@ -478,34 +520,32 @@ _SKILL_REVIEW_PROMPT = (
     "the user is and what the current situation and state of your operations are'; skills capture "
     "'how to do this class of task for this user'. When they complain about how you handled a "
     "task, the skill that governs that task needs to carry the lesson.\n\n"
-    "If you notice two existing skills that overlap, note it in your reply — the background "
-    "curator handles consolidation at scale.\n\n"
+    "Avoid duplicate skills: extend a suitable writable skill instead. If overlap involves "
+    "protected skills, note it without changing them. Use only maintenance available under the "
+    "host product policy; do not promise future consolidation.\n\n"
     "Protected skills (DO NOT edit these):\n"
     "  • Bundled skills (shipped with Hermes, e.g. 'hermes-agent').\n"
-    "  • Hub-installed skills (installed via 'hermes skills install').\n"
+    "  • Hub-installed skills.\n"
     "  • Skills in skills.external_dirs (externally owned).\n"
-    "  • PINNED skills (marked via 'hermes curator pin'). You are an autonomous no-user-present "
+    "  • PINNED skills. You are an autonomous no-user-present "
     "actor, so pin blocks your writes too — content updates included. Only the user, in a "
     "foreground session, can change a pinned skill.\n"
     "  • USER-OWNED skills — anything not curator-managed. A skill the user hand-wrote, installed "
-    "by URL, or asked a foreground agent to create is theirs, not yours; your writes to it WILL be "
+    "by URL, or explicitly protected remains theirs; your writes to it WILL be "
     "refused. This includes skills that were loaded or consulted this session: being in play does "
-    "not make one yours to edit. If such a skill is wrong or outdated, say so in your reply and "
-    "recommend 'hermes curator adopt <name>' — do not try to patch it.\n"
+    "not make one yours to edit. If such a skill is wrong or outdated, report the limitation; "
+    "do not patch it or demand unsupported owner CLI commands.\n"
     "If the only skills that need updating are protected, say\n"
     "'Nothing to save.' and stop.\n\n"
     "Do NOT capture" + _DO_NOT_CAPTURE_BLOCK +
-    "'Nothing to save.' is a real option but should NOT be the default. If the session ran "
-    "smoothly with no corrections and produced no new technique, just say 'Nothing to save.' and "
-    "stop. Otherwise, act."
+    "If there is no useful new supported lesson, say 'Nothing to save.' and stop."
 )
 
 _COMBINED_REVIEW_PROMPT = (
     "Review the conversation above and update two things:\n\n"
     "**Memory**: " + _MEMORY_ROUTING_BLOCK +
-    "**Skills**: how to do this class of task. Be ACTIVE — most sessions produce at least one "
-    "skill update. A pass that does nothing is a missed learning opportunity, not a neutral "
-    "outcome.\n\n"
+    "**Skills**: how to do this class of task. Automatically save useful, evidence-backed lessons. "
+    "Do not write merely because a review occurred; no new learning is a valid outcome.\n\n"
     "Target shape of the skill library: CLASS-LEVEL skills with a SKILL.md of always-on rules and a "
     "small `references/` set of topical depth — not narrow one-session skills, and not an umbrella "
     "hoarding a references/ file per session.\n\n" + _LESSON_LAYER_BLOCK +
@@ -546,24 +586,26 @@ _COMBINED_REVIEW_PROMPT = (
     "that governs the task when one exists, USER.md only for cross-cutting preferences no skill "
     "owns — never both. Duplicating it is how a memory file ends up restating SKILL.md until both "
     "hit their size limits.\n\n"
-    "If you notice overlapping existing skills, mention it — the background curator handles "
-    "consolidation.\n\n"
+    "Avoid duplicate skills: extend a suitable writable skill instead. Note overlap involving "
+    "protected skills without changing them; use only maintenance available under host product "
+    "policy, without promising future consolidation.\n\n"
     "Protected skills (DO NOT edit these):\n"
     "  • Bundled skills (shipped with Hermes, e.g. 'hermes-agent').\n"
-    "  • Hub-installed skills (installed via 'hermes skills install').\n"
+    "  • Hub-installed skills.\n"
     "  • Skills in skills.external_dirs (externally owned).\n"
-    "  • PINNED skills (marked via 'hermes curator pin'). Pin blocks autonomous writes entirely — "
+    "  • PINNED skills. Pin blocks autonomous writes entirely — "
     "content updates included — because no user is present to consent. Only a foreground session "
     "can change one.\n"
-    "  • USER-OWNED skills — anything not curator-managed (hand-written, URL-installed, or created "
-    "by a foreground agent at the user's request). Your writes to these WILL be refused, including "
-    "to skills loaded or consulted this session. If one is wrong, say so in your reply and "
-    "recommend 'hermes curator adopt <name>' instead.\n"
+    "  • USER-OWNED skills — anything not curator-managed (hand-written, URL-installed, or explicitly "
+    "protected). New agent-authored foreground creations are eligible; old unknown provenance is "
+    "not permission to adopt. Your writes to protected skills WILL be refused, including "
+    "to skills loaded or consulted this session. If one is wrong, report the limitation and "
+    "respect its protection; do not demand unsupported owner CLI commands.\n"
     "If the only skills that need updating are protected, say\n"
     "'Nothing to save.' and stop.\n\n"
     "Do NOT capture as skills" + _DO_NOT_CAPTURE_BLOCK +
     "Act on whichever of the two dimensions has real signal. If genuinely nothing stands out on "
-    "either, say 'Nothing to save.' and stop — but don't reach for that conclusion as a default."
+    "either, say 'Nothing to save.' and stop."
 )
 
 
@@ -1314,6 +1356,9 @@ def spawn_background_review_thread(
     # Per-agent overrides (agent._MEMORY_REVIEW_PROMPT etc.) keep working.
     name = _PROMPT_NAME_BY_SCOPE[(review_memory, review_skills)]
     prompt = getattr(agent, name, globals()[name])
+    if review_skills and (source_session := getattr(agent, "session_id", None)):
+        prompt += "\n\nPrivate learning source session: " + json.dumps(str(source_session)) + ". "
+        prompt += "Use actual tool-call/result IDs from the snapshot as evidence; never invent a source. "
     if focus := (focus or "").strip():
         prompt = (
             f"{prompt}\n\nThe user explicitly requested this review with the following "

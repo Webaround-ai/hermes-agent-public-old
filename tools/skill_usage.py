@@ -217,13 +217,24 @@ def _iter_skill_mds(base: Path, *, local_only: bool) -> Iterator[Tuple[str, Path
             yield _read_skill_name(skill_md, fallback=skill_md.parent.name), skill_md
 
 
+def _has_owner_protection(skill_md: Path) -> bool:
+    """Explicit owner metadata overrides agent provenance; unreadable metadata fails closed."""
+    from agent.skill_utils import parse_frontmatter
+    try:
+        metadata, _ = parse_frontmatter(skill_md.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return True
+    return metadata.get("owner") is True or metadata.get("pinned") is True or metadata.get("created_by") == "owner"
+
+
 def _scan_local_skills(keep: Callable[[str, Path, Set[str], Dict[str, Any]], bool]) -> List[str]:
     """Sorted local skill names passing *keep(name, skill_md, bundled, usage)*; hub/protected names never reach it."""
     if not (base := _skills_dir()).exists():
         return []
     hub, bundled, usage = _read_hub_installed_names(), _read_bundled_manifest_names(), load_usage()
     return sorted({name for name, skill_md in _iter_skill_mds(base, local_only=True)
-                   if name not in hub and not is_protected_builtin(name) and keep(name, skill_md, bundled, usage)})
+                   if name not in hub and not is_protected_builtin(name) and not _has_owner_protection(skill_md)
+                   and keep(name, skill_md, bundled, usage)})
 
 
 def list_agent_created_skill_names() -> List[str]:
@@ -281,6 +292,8 @@ def is_curation_eligible(skill_name: str, skill_path: Optional[Path] = None) -> 
     if is_bundled(skill_name):
         return _prune_builtins_enabled()
     local_dir = _find_skill_dir(skill_name)
+    if local_dir and _has_owner_protection(local_dir / "SKILL.md"):
+        return False
     return not is_external_skill_path(local_dir) if local_dir else _find_external_skill_dir(skill_name) is None
 
 
@@ -291,7 +304,8 @@ def _is_curator_managed_record(record: Any) -> bool:
     NAMING (issue #67140): the on-disk field is ``created_by``, which reads like provenance but is consumed
     as a **curator-management opt-in policy flag**. The two are not the same question:
     """
-    return isinstance(record, dict) and (record.get("created_by") == "agent" or record.get("agent_created") is True)
+    return (isinstance(record, dict) and record.get("created_by") not in ("owner", "installed")
+            and (record.get("created_by") == "agent" or record.get("agent_created") is True))
 
 
 def is_curator_managed(skill_name: str) -> bool:
@@ -299,8 +313,7 @@ def is_curator_managed(skill_name: str) -> bool:
 
 
 def list_unmanaged_skill_names() -> List[str]:
-    """Curation-ELIGIBLE skills without a provenance marker (pre-``created_by`` records, or foreground creates that
-    belong to the user). Invisible to ``curated_report()`` and auto transitions; only ``curator adopt`` hands
+    """Curation-ELIGIBLE skills without a provenance marker (pre-``created_by`` records, or historical foreground creates). Invisible to ``curated_report()`` and auto transitions; only ``curator adopt`` hands
     them over — provenance is declared, never inferred from activity."""
     return _scan_local_skills(
         lambda name, md, bundled, usage: name not in bundled and not _is_curator_managed_record(usage.get(name))
@@ -520,7 +533,7 @@ def record_created(skill_name: str, *, agent_created: bool, task_id: Optional[st
                    session_id: Optional[str] = None) -> None:
     """Persist creation provenance and emit a create fact; the record is reset (a create is a new logical skill).
 
-    Foreground creates (``agent_created=False`` — e.g. ``/learn`` at the user's request) are stamped
+    Explicitly owner-managed creates (``agent_created=False``) are stamped
     ``created_by="learn"``: a learning-signal marker, NOT the curator-management opt-in (``"agent"``),
     so /journey can show user-taught skills without handing them to autonomous curation.
     """

@@ -736,8 +736,8 @@ def _record_success(action, name, result, *, file_path, absorbed_into, task_id,
     with suppress(Exception):
         from agent.prompt_builder import clear_skills_system_prompt_cache
         clear_skills_system_prompt_cache(clear_snapshot=True)
-    # Curator telemetry: only the background review fork marks a skill agent-created
-    # (foreground creates belong to the user). A recoverable curator archive keeps its
+    # skill_manage creates are agent-authored in foreground and background alike.
+    # Existing unknown/owner provenance is never adopted by a patch. A recoverable archive keeps its
     # record as STATE_ARCHIVED (`hermes curator status`/`restore`); only a hard delete forgets.
     with suppress(Exception):
         from tools.skill_usage import bump_patch, forget, record_created
@@ -746,9 +746,8 @@ def _record_success(action, name, result, *, file_path, absorbed_into, task_id,
         # and `hermes curator restore` promises the skill can be brought back. Route through the recoverable
         # archive primitive instead of permanent rmtree so a misjudged consolidation can be undone (#29912).
         # Foreground, user-directed deletes keep their existing hard-delete semantics.
-        from tools.skill_provenance import is_background_review
         if action == "create":
-            record_created(name, agent_created=is_background_review(),
+            record_created(name, agent_created=True,
                            task_id=task_id, session_id=session_id)
         elif action in {"patch", "edit", "write_file", "remove_file"}:
             bump_patch(name, action=action, task_id=task_id, session_id=session_id)
