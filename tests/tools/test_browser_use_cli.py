@@ -607,7 +607,7 @@ class TestOwnTabPreamble:
         assert result["success"] is True
         assert "_hermes_ensure_own_tab" in result["output"]
         # model code still present, after the preamble
-        assert result["output"].index("_hermes_ensure_own_tab") < result["output"].index("print('payload')")
+        assert result["output"].index("_hermes_ensure_own_tab") < result["output"].rindex("payload")
 
     def test_named_packaged_chromium_skips_preamble(self, tmp_path, monkeypatch):
         """Each named session launches its own packaged Chromium — nothing to share a tab with."""
@@ -927,6 +927,12 @@ class TestSkillTextDescription:
 
 
 class TestBrowserExec:
+    def test_webmcp_redaction_preserves_structured_escapes(self):
+        value = {"tools": [{"name": 'quoted"\\tool', "description": 'secret"\\value'}]}
+        redacted = bu_cli._redact_webmcp(value, lambda text, **kw: text.replace('secret"\\value', '[redacted]'))
+        assert redacted == {"tools": [{"name": 'quoted"\\tool', "description": '[redacted]'}]}
+        assert json.loads(json.dumps(redacted)) == redacted
+
     def test_missing_cli_returns_install_hint(self, monkeypatch):
         monkeypatch.setattr(bu_cli, "_find_cli", lambda: None)
         result = json.loads(bu_cli.browser_exec("print(page_info())"))
@@ -936,13 +942,28 @@ class TestBrowserExec:
         result = json.loads(bu_cli.browser_exec("   "))
         assert "error" in result
 
-    def test_code_piped_on_stdin(self, tmp_path, monkeypatch):
-        cli = _fake_cli(tmp_path, 'code=$(cat)\necho "got:$code"\n')
-        monkeypatch.setattr(bu_cli, "_find_cli", lambda: [cli])
-        result = json.loads(bu_cli.browser_exec('print("hi")'))
-        assert result["success"] is True
-        assert result["exit_code"] == 0
-        assert 'got:print("hi")' in result["output"]
+    @pytest.mark.parametrize("fails", [False, True])
+    def test_code_piped_on_stdin(self, tmp_path, monkeypatch, fails):
+        # Execute the CLI payload, including bundled helper installation. No
+        # browser calls are necessary to prove stdin code and output framing.
+        cli = tmp_path / "harness.py"
+        cli.write_text("""import sys
+def current_tab(): return {'targetId':'test-target'}
+def cdp(method, **kwargs):
+    if method == 'Target.attachToTarget': return {'sessionId':'test-session'}
+    if method == 'Runtime.evaluate': return {'result':{'value':{'status':'no_api','origin':'https://example.test'}}}
+    return {}
+exec(sys.stdin.read(), globals())
+""")
+        monkeypatch.setattr(bu_cli, "_find_cli", lambda: [sys.executable, str(cli)])
+        result = json.loads(bu_cli.browser_exec('raise RuntimeError("original failure")' if fails else 'print("hi")'))
+        assert result["success"] is not fails
+        assert (result["exit_code"] == 0) is not fails
+        if fails:
+            assert "original failure" in result["stderr"]
+        else:
+            assert result["output"].strip() == "hi"
+        assert result["webmcp"] == {"status": "no_api", "origin": "https://example.test", "target_id": "test-target"}
         assert "session" not in result
 
     def test_session_sets_bu_name(self, tmp_path, monkeypatch):
