@@ -268,6 +268,13 @@ def tool_ended_turn_text(agent: Any, assistant_message: Any, messages: Any) -> O
     and the assistant message must carry visible text. Any doubt continues the loop: a failed or refused
     call reaches the model, which can fix it."""
     agent._tool_ended_turn_payload = False
+    # Execution transfer is native control flow, independent of reply-tool opt-in.
+    # Its trusted predicate ran on the canonical executed tool after result persistence;
+    # remaining sibling calls have already been recorded as not started.
+    handoff = getattr(agent, '_tool_execution_handoff', None)
+    if handoff and getattr(agent, '_interrupt_requested', False) is not True:
+        agent._tool_ended_turn_payload = True
+        return handoff
     # Opt-in per run (``ends_turn: true`` on /v1/runs): skills and flows that write records after the reply's cards
     # (task_update after show_widget) must keep their next round on every other run.
     if getattr(agent, "_ends_turn_enabled", False) is not True:

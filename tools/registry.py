@@ -202,6 +202,9 @@ class ToolEntry:
     # Iollo fork: offered only under a per-run tool profile (``agent/tool_profile.py``); calling it lifts
     # the profile for the rest of the turn. Never sent without a profile.
     lifts_tool_profile: bool = False
+    # Trusted native control transfer, evaluated after the successful result is durable.
+    # predicate(actual_args, result) returns a bounded acknowledgement, or None to continue.
+    execution_handoff: Optional[Callable] = None
 
 
 class _PluginOverridePolicy:
@@ -671,10 +674,13 @@ class ToolRegistry:
         check_fn: Callable = None, requires_env: list = None, is_async: bool = False,
         description: str = "", emoji: str = "", max_result_size_chars: int | float | None = None,
         dynamic_schema_overrides: Callable = None, override: bool = False,
-        scope: Optional[str] = None, ends_turn: Any = False, lifts_tool_profile: bool = False):
+        scope: Optional[str] = None, ends_turn: Any = False, lifts_tool_profile: bool = False,
+        execution_handoff: Optional[Callable] = None):
         """Register a tool (called at import time by each tool file). ``override=True`` is an
         explicit opt-in for plugins replacing a built-in implementation (e.g. a headed-Chrome
         browser backend); without it, cross-toolset shadowing is rejected."""
+        if execution_handoff is not None and not callable(execution_handoff):
+            raise ValueError('execution_handoff must be a callable or None')
         # Reject malformed schemas at registration, not at request time: a non-dict
         # ``parameters`` (e.g. a list) serializes into every provider request and 400s the
         # whole turn far from the offending plugin. Failing here names the culprit instead.
@@ -737,7 +743,7 @@ class ToolRegistry:
                 max_result_size_chars=max_result_size_chars,
                 dynamic_schema_overrides=dynamic_schema_overrides,
                 ends_turn=ends_turn if callable(ends_turn) else bool(ends_turn),
-                lifts_tool_profile=bool(lifts_tool_profile))
+                lifts_tool_profile=bool(lifts_tool_profile), execution_handoff=execution_handoff)
             # Availability is derived per-tool (_toolset_has_exposable_tools), so this map no
             # longer gates a toolset; it still feeds get_toolset_requirements ->
             # TOOLSET_REQUIREMENTS["check_fn"], which banner.py reads (presence only,

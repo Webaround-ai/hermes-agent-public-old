@@ -154,6 +154,10 @@ def _batch_admission(tool_call, execution_cwd: Optional[Path]) -> tuple[str, Lis
     name, args = _peel_bridge_call(tool_name, function_args)
     if name in _NEVER_PARALLEL_TOOLS:
         return None
+    from tools.registry import registry
+    entry = registry.get_entry(name)
+    if entry is not None and callable(getattr(entry, 'execution_handoff', None)):
+        return None
     if name in _PATH_SCOPED_TOOLS:
         scoped = _extract_parallel_scope_paths(name, args, execution_cwd=execution_cwd)
         return (name, scoped, name in _PATH_SCOPED_WRITERS) if scoped else None

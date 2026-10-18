@@ -322,6 +322,7 @@ def _append_skipped_tool_results(
     *,
     content: str,
     hook_error_type: Optional[str] = None,
+    hook_error_message: str = 'Tool execution skipped due to user interrupt',
     hook_id: Optional[Callable[[Any], str]] = None,
     flush_stage: Optional[str] = None,
     stop_on_flush_failure: bool = True,
@@ -338,7 +339,7 @@ def _append_skipped_tool_results(
         if hook_error_type is not None:
             _ToolCallRef(name, {}, effective_task_id, (hook_id or _pairing_tool_call_id)(tc), []).emit_post(
                 agent, result,
-                status="cancelled", error_type=hook_error_type, error_message="Tool execution skipped due to user interrupt",
+                status="cancelled", error_type=hook_error_type, error_message=hook_error_message,
             )
         if flush_stage is not None:
             flushed = _flush_session_db_after_tool_progress(agent, messages, stage=f"{flush_stage} {name}")
@@ -1565,6 +1566,16 @@ def execute_tool_calls_concurrent(agent, assistant_message, messages: list, effe
 
     parsed_calls = [_parse_tool_call(agent, tc) for tc in tool_calls]
 
+    if getattr(agent, '_tool_execution_handoff', None):
+        _skip_after_execution_handoff(agent, messages, tool_calls, effective_task_id)
+        return
+    # Even direct callers of the concurrent executor must respect a possible control
+    # transfer before siblings start. Ordinary batches keep their existing concurrency.
+    from tools.registry import registry
+    if any(callable(getattr(registry.get_entry(pc.name), 'execution_handoff', None)) for pc in parsed_calls):
+        return execute_tool_calls_sequential(agent, assistant_message, messages, effective_task_id,
+                                             api_call_count, finalize=finalize)
+
     tool_names_str = ", ".join(pc.name for pc in parsed_calls)
     if _tool_progress_enabled(agent):
         print(f"  ⚡ Concurrent: {num_tools} tool calls — {tool_names_str}")
@@ -1776,6 +1787,37 @@ def _run_sequential_call(
     return managed, tool_duration
 
 
+def _skip_after_execution_handoff(agent, messages, calls, effective_task_id):
+    """Pair every unstarted sibling with a durable no-effect result, without dispatching it."""
+    return _append_skipped_tool_results(
+        agent, messages, calls, effective_task_id,
+        content='[Tool execution transferred — {name} was not started.]',
+        hook_error_type='execution_handoff', hook_error_message='Execution transferred to another executor',
+        flush_stage='execution handoff skipped result')
+
+
+def _record_execution_handoff(agent, ref, result):
+    """Only a trusted registration may transfer control; model/tool-output markers alone cannot."""
+    from tools.registry import registry
+    entry = registry.get_entry(ref.name)
+    rule = getattr(entry, 'execution_handoff', None) if entry is not None else None
+    if not callable(rule):
+        return
+    try:
+        acknowledgement = rule(ref.args, result)
+        if acknowledgement is None or acknowledgement is False:
+            return
+        if not isinstance(acknowledgement, str) or not 0 < len(acknowledgement.strip()) <= 2000:
+            raise ValueError('invalid execution handoff acknowledgement')
+        acknowledgement = acknowledgement.strip()
+    except Exception:
+        # The action already ran: do not continue the foreground on an uncertain
+        # transfer contract or retry that action. Preserve its recorded result.
+        logger.exception('Execution handoff predicate failed for %s', ref.name)
+        acknowledgement = 'The handoff outcome needs checking before this work can continue.'
+    agent._tool_execution_handoff = acknowledgement
+
+
 def _publish_sequential_result(agent, messages: list, ref: _ToolCallRef, managed: _ManagedToolResult, *, tool_duration: float, index: int, budget: BudgetConfig, transform_applied: bool) -> bool:
     """Terminal hook → observe → commit → completion callbacks/print for one sequential
     result; False when the incremental flush failed (the caller must stop the batch)."""
@@ -1798,6 +1840,7 @@ def _publish_sequential_result(agent, messages: list, ref: _ToolCallRef, managed
     # Multimodal dict results (_multimodal=True) are not sliceable as strings.
     _result_len = len(function_result) if isinstance(function_result, str) else len(str(function_result))
     _is_error_result, _ = _detect_tool_failure(ref.name, function_result)
+    handoff_result = function_result  # retain the trusted result even if transcript budgeting spills it
     committed = _commit_tool_result(
         agent, messages, ref, function_result,
         budget=budget, tool_duration=tool_duration, is_error=_is_error_result, blocked=managed.blocked,
@@ -1809,6 +1852,8 @@ def _publish_sequential_result(agent, messages: list, ref: _ToolCallRef, managed
     if committed is None:
         return False
     function_result, display_function_result, risk_metadata = committed
+    if not managed.blocked and not _execution_timed_out and not _is_error_result:
+        _record_execution_handoff(agent, ref, handoff_result)
 
     _emit_tool_complete_and_risk(agent, ref, display_function_result, risk_metadata, managed.blocked)
     if _tool_progress_enabled(agent):
@@ -1820,6 +1865,10 @@ def execute_tool_calls_sequential(agent, assistant_message, messages: list, effe
     from types import SimpleNamespace
     from agent.terminal_approval_batch import terminal_approval_batch, terminal_approval_runs
     for calls in terminal_approval_runs(agent, assistant_message.tool_calls):
+        if getattr(agent, '_tool_execution_handoff', None):
+            if not _skip_after_execution_handoff(agent, messages, calls, effective_task_id):
+                return
+            continue
         with terminal_approval_batch(agent, calls, messages, effective_task_id):
             _execute_tool_calls_sequential(agent, SimpleNamespace(tool_calls=calls), messages, effective_task_id, api_call_count, finalize=False)
         if getattr(agent, "_incremental_persistence_failed", False):
@@ -1837,6 +1886,9 @@ def _execute_tool_calls_sequential(agent, assistant_message, messages: list, eff
 
     for i, tool_call in enumerate(tool_calls, 1):
         if getattr(agent, "_incremental_persistence_failed", False):
+            return
+        if getattr(agent, '_tool_execution_handoff', None):
+            _skip_after_execution_handoff(agent, messages, tool_calls[i - 1:], effective_task_id)
             return
         # Check interrupt BEFORE each tool so a "stop" during the previous one skips the rest.
         if agent._interrupt_requested:
@@ -1902,6 +1954,10 @@ def execute_tool_calls_segmented(agent, assistant_message, messages: list, effec
     for kind, calls in segments:
         if getattr(agent, "_incremental_persistence_failed", False):
             return
+        if getattr(agent, '_tool_execution_handoff', None):
+            if not _skip_after_execution_handoff(agent, messages, calls, effective_task_id):
+                return
+            continue
         segment_message = SimpleNamespace(tool_calls=list(calls))
         run_segment = execute_tool_calls_concurrent if kind == "parallel" else execute_tool_calls_sequential
         run_segment(agent, segment_message, messages, effective_task_id, api_call_count, finalize=False)
