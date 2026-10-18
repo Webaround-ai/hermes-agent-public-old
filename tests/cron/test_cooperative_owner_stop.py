@@ -86,6 +86,18 @@ def test_only_native_stop_before_any_action_proves_safe_continuation():
     assert stopped_before_action(cold) is False
 
 
+def test_unavailable_withdrawal_check_blocks_work_without_claiming_owner_withdrawal():
+    agent = SimpleNamespace(_interrupt_requested=False)
+    def unavailable():
+        raise OSError('Synthetic authority store unavailable')
+    install_cooperative_stop(agent, unavailable)
+    blocked, _ = _pre_tool_block(agent, SimpleNamespace(args={}))
+    assert blocked and 'not started' in blocked
+    assert stop_at_iteration_boundary(agent) is True
+    assert 'Owner requested' not in agent._interrupt_message
+    assert stopped_before_action(agent) is False  # failure is not authoritative proof for automatic continuation
+
+
 
 def test_native_safe_stop_proof_is_durable_and_distinct_from_model_error(tmp_path, monkeypatch):
     from cron import executions

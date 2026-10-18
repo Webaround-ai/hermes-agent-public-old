@@ -39,6 +39,6 @@ def stop_requested(agent):
 def stop_at_iteration_boundary(agent):
     if stop_requested(agent):
         agent._interrupt_requested = True
-        agent._interrupt_message = "Owner requested stopping; no further actions were started."
+        agent._interrupt_message = "Execution stopped; no further actions were started."
         return True
     return False

@@ -656,7 +656,7 @@ def _pre_tool_block(agent, ref: _ToolCallRef):
     hook-modified args applied. Hook failures never block."""
     from agent.cooperative_stop import stop_requested
     if stop_requested(agent):
-        return "Owner requested stopping; this action was not started.", ref.args
+        return "Execution stopped; this action was not started.", ref.args
     try:
         from hermes_cli.plugins import _dispatch_pre_tool_call_hooks
 
@@ -709,7 +709,7 @@ def _dispatch_authorized_once(
 
     from agent.cooperative_stop import stop_requested
     if block_message is None and stop_requested(agent):
-        block_message = "Owner requested stopping; this action was not started."
+        block_message = "Execution stopped; this action was not started."
         block_error_type = "owner_stop"
     if block_message is not None or guardrail_decision is not None:
         _advance_start_order()
@@ -729,7 +729,7 @@ def _dispatch_authorized_once(
             return None
         state.blocked = True
         return _blocked_tool_result(agent, ref,
-            block_message="Owner requested stopping; this action was not started.",
+            block_message="Execution stopped; this action was not started.",
             block_error_type="owner_stop", guardrail_decision=None)
 
     from agent.terminal_approval_batch import prepare_current_terminal
