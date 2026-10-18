@@ -91,3 +91,18 @@ predicate. New `skill_manage(create)` creations are agent-authored in foreground
 existing unknown or owner provenance is never automatically adopted. Pinned, shipped,
 installed and externally owned skills keep their protection. This is source evidence only;
 a new runtime image and rollout are required before deployed behavior changes.
+
+## Native continuation and local memory cleanup (source, 2026-10-18)
+
+Based on native `33bb9daa`, scheduled continuation restores the exact execution session using
+`hermes_cli.oneshot._load_resume_target`, including compression lineage and the canonical model
+history. The existing scheduler and conversation loop execute the revised direction; the job
+ledger retains the session binding and the existing job retains idempotent continuation admission.
+Cloud task publication must distinguish execution identity from shared native session identity.
+
+The retired Iollo permissions plugin and memory-decision client are removed. Native approvals,
+local notes/index and connected Mac recall remain. `memory_note` gains scoped correction/removal
+with expected-content validation and generated-profile invalidation. Retained transcript and
+skill deletion are separate operations; note removal is not a guarantee against later relearning.
+Browser/MCP integrations continue to use native tools; Iollo's structured payment adapter lives
+in the existing cloud transaction gate. Check cloud STATE for installed image evidence.

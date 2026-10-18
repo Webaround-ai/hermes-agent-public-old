@@ -1,9 +1,0 @@
-name: iollo-permissions
-version: "0.1.0"
-description: "Iollo permission tiers (permissions.yaml, schema 1): tier-4 hard blocks in code, the approval model as tier judge with keyword-detector fallback, versions before overwrite, files_trash, and an activity file. Off unless enabled."
-author: "Webaround (Iollo fork)"
-hooks:
-  - pre_tool_call
-  - post_tool_call
-provides_tools:
-  - files_trash

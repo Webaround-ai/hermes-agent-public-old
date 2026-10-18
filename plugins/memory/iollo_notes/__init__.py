@@ -1,21 +1,12 @@
-"""iollo_notes — Iollo's memory provider (fork brief 003).
+"""Typed local notes, profile injection and connected Mac recall.
 
-Many small typed Markdown notes in ``$HERMES_HOME/memory-notes`` (the synced git folder), the
-generated profile ``USER.md`` injected whole into the system prompt, and everything else found
-on demand by a local index (``index.py``). Memory never leaves the device: the network calls are
-the Jev decision URL the policy configures (``decide_url``), where every decision has a local
-fallback, and ``recall``'s search of the owner's Mac through the control plane, which sends the query,
-never notes. Consolidation and USER.md generation run on the box (iollo brief 032), not here.
+Activate with ``memory.provider: iollo_notes``. The ``memory.iollo_notes.device`` setting
+records provenance as ``box`` or ``mac:<id>``. Facts are filed and retrieved through the local
+index in ``$HERMES_HOME``; consolidation and USER.md generation run on the box.
 
-Activate with ``memory.provider: iollo_notes``. Settings live under ``memory.iollo_notes`` in
-config.yaml: ``decide_url``, ``decide_token_env``, ``decide_timeout_s`` (1.5), ``device``
-(``box`` or ``mac:<id>``).
-
-``recall`` finds things on the owner's Mac. The Mac is a tool: recall asks the connected Mac's own index
-(``recall_local`` through the control plane's ``/relay/device-tool``, the route ``mac_call`` uses) and nothing
-else. The box keeps no copy of the Mac's index (iollo owner decision 2026-10-15; the box embeds only its own
-notes). When the Mac is not connected, has recall off or does not answer, recall says so plainly instead of
-answering with an empty list.
+``recall`` searches the connected Mac's own index through ``/relay/device-tool``, sending the
+query rather than notes. The box embeds only its own notes and keeps no Mac index copy.
+When the Mac is disconnected, recall is off or the Mac does not answer, recall says so plainly.
 """
 
 from __future__ import annotations
@@ -45,13 +36,11 @@ NOTES_DIRNAME = "memory-notes"
 INDEX_FILENAME = "memory-index.db"
 PROFILE_CHAR_CAP = 16_000
 PREFETCH_KEEP = 3
-RERANK_CANDIDATES = 10
+SEARCH_CANDIDATES = 10
 ROUTE_CANDIDATES = 50
-# Fallback routing: attach to the best hit only at this normalised score (see index.py): a note
+# Local filing: attach to the best hit only at this normalised score (see index.py): a note
 # ranked first by both FTS and vectors, or an alias match plus a top FTS hit.
 ROUTE_MIN_SCORE = 0.9
-STATE_CHARS = 4000
-DEFAULT_TIMEOUT_S = 1.5
 RECALL_TIMEOUT_S = 10.0
 RECALL_MAC_DEADLINE_S = 20               # how long recall waits for the Mac's own index
 RECALL_DEFAULT_LIMIT, RECALL_MAX_LIMIT = 10, 20
@@ -107,18 +96,30 @@ MEMORY_NOTE_SCHEMA = {
         "Record one durable fact about the user or their world (a preference, a person, an organization, "
         "something decided in a conversation). It is filed into the right note automatically, dated and "
         "stamped with where it came from. Use this for anything worth remembering. USER.md (the profile) is "
-        "generated from these notes: do not try to edit it."
+        "generated from these notes. For owner-requested corrections/removals, first memory_read the exact note, "
+        "then use correct/remove with its id, complete expected_content and exact old fact. correct replaces only "
+        "that fact with replacement; remove deletes only that fact. remove_note deletes the whole selected note. "
+        "Use only the scope the owner requested; preserve unrelated facts. Inspect relevant learned procedures "
+        "with skill and correct/remove them with native skill_manage only when the owner's request includes them. "
+        "Report the returned scope precisely: retained conversations and original sources are unchanged, and "
+        "old evidence may be learned again. Never claim complete forgetting from a notes-only change. "
+        "Generated USER.md is invalidated and rebuilt by normal maintenance; handwritten profiles stay intact."
     ),
     "parameters": {
         "type": "object",
         "properties": {
-            "fact": {"type": "string", "description": "The fact, one self-contained sentence."},
+            "action": {"type": "string", "enum": ["record", "correct", "remove", "remove_note"],
+                       "description": "Default record. Mutations require exact id and expected_content from memory_read."},
+            "id": {"type": "string", "description": "Exact note id for correction/removal."},
+            "expected_content": {"type": "string", "description": "Complete unchanged content returned by memory_read; refuses stale edits."},
+            "replacement": {"type": "string", "description": "New fact for correct; dated with this conversation's provenance."},
+            "fact": {"type": "string", "description": "New fact for record; exact old fact text for correct/remove."},
             "type_hint": {"type": "string", "enum": list(notes_mod.NOTE_TYPES),
                           "description": "The kind of note this belongs to, if a new note is needed."},
             "about": {"type": "string", "description": "Who or what the fact is about (e.g. 'Ana')."},
             "valid_until": {"type": "string", "description": "YYYY-MM-DD after which the fact stops being true."},
         },
-        "required": ["fact"],
+        "required": [],
     },
 }
 
@@ -234,51 +235,6 @@ def _today() -> str:
     return _dt.date.today().isoformat()
 
 
-# -- Jev answers ---------------------------------------------------------------------------------
-# The decide route returns {"answers": ... | null}; null (or no answer at all) means "use the
-# fallback". The answer shapes below are read leniently; anything else counts as no answer.
-
-def _as_yes_no(answer: Any) -> Optional[bool]:
-    if isinstance(answer, bool):
-        return answer
-    if isinstance(answer, str):
-        low = answer.strip().lower()
-        return True if low in ("yes", "y", "true") else False if low in ("no", "n", "false") else None
-    if isinstance(answer, dict):
-        for key in ("answer", "retrieve", "value"):
-            if key in answer:
-                return _as_yes_no(answer[key])
-    if isinstance(answer, list) and len(answer) == 1:
-        return _as_yes_no(answer[0])
-    return None
-
-
-def _as_scores(answer: Any, ids: List[str]) -> Optional[Dict[str, float]]:
-    def num(v):
-        return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else None
-
-    if isinstance(answer, dict) and "scores" in answer:
-        answer = answer["scores"]
-    if isinstance(answer, dict):
-        scores = {k: num(v) for k, v in answer.items() if k in ids}
-    elif isinstance(answer, list) and answer and all(isinstance(a, dict) for a in answer):
-        scores = {a.get("id"): num(a.get("score")) for a in answer if a.get("id") in ids}
-    elif isinstance(answer, list) and len(answer) == len(ids):
-        scores = dict(zip(ids, (num(a) for a in answer)))
-    else:
-        return None
-    scores = {k: v for k, v in scores.items() if v is not None}
-    return scores or None
-
-
-def _as_choice(answer: Any) -> Optional[str]:
-    if isinstance(answer, dict):
-        answer = answer.get("choice", answer.get("answer"))
-    if isinstance(answer, list) and len(answer) == 1:
-        answer = answer[0]
-    return answer.strip() if isinstance(answer, str) and answer.strip() else None
-
-
 class IolloNotesProvider(MemoryProvider):
     """Typed notes + local search; the profile in every turn."""
 
@@ -296,16 +252,12 @@ class IolloNotesProvider(MemoryProvider):
         return PROVIDER_NAME
 
     def is_available(self) -> bool:
-        return True  # SQLite FTS always works; vectors and Jev are optional
+        return True  # SQLite FTS always works; vectors are optional
 
     # -- config ----------------------------------------------------------------------------------
 
     def get_config_schema(self) -> List[Dict[str, Any]]:
         return [
-            {"key": "decide_url", "description": "Jev memory decision URL (empty = local fallbacks only)", "default": ""},
-            {"key": "decide_token_env", "description": "Env var holding the bearer token for decide_url", "default": ""},
-            {"key": "decide_timeout_s", "description": "Seconds to wait for a Jev decision", "default": str(DEFAULT_TIMEOUT_S),
-             "type": "number"},
             {"key": "device", "description": "This device in provenance: box or mac:<id>", "default": "box"},
         ]
 
@@ -390,59 +342,18 @@ class IolloNotesProvider(MemoryProvider):
 
         return f"{_PROFILE_SEP}\n{MEMORY_BLOCK_HEADERS['user']}\n{_PROFILE_SEP}\n{text}"
 
-    # -- Jev -------------------------------------------------------------------------------------
-
-    def _decide(self, decision: str, state: str, candidates: List[Dict[str, Any]]) -> Any:
-        """The decide route's ``answers``; None when unconfigured, down, slow or undecided."""
-        url = str(self._config.get("decide_url") or "").strip()
-        if not url:
-            return None
-        try:
-            timeout = float(self._config.get("decide_timeout_s") or DEFAULT_TIMEOUT_S)
-        except (TypeError, ValueError):
-            timeout = DEFAULT_TIMEOUT_S
-        headers = {"Content-Type": "application/json"}
-        token_env = str(self._config.get("decide_token_env") or "").strip()
-        token = os.environ.get(token_env, "") if token_env else ""
-        if token:
-            headers["Authorization"] = f"Bearer {token}"
-        body = json.dumps({"decision": decision, "state": (state or "")[:STATE_CHARS],
-                           "candidates": candidates}, ensure_ascii=False).encode("utf-8")
-        request = urllib.request.Request(url, data=body, headers=headers, method="POST")
-        try:
-            with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310 - policy-set URL
-                payload = json.loads(response.read(256 * 1024).decode("utf-8"))
-        except (urllib.error.URLError, OSError, ValueError) as exc:
-            # Counted, never logged with content: note ids name people.
-            logger.debug("iollo_notes decide %s unavailable: %s", decision, type(exc).__name__)
-            return None
-        return payload.get("answers") if isinstance(payload, dict) else None
-
-    @staticmethod
-    def _candidate(hit: Dict[str, Any]) -> Dict[str, Any]:
-        return {"id": hit["id"], "type": hit["type"], "title": hit["title"], "bullets": hit["bullets"]}
-
-    # -- recall ----------------------------------------------------------------------------------
-
     def prefetch(self, query: str, *, session_id: str = "") -> str:
         self._last_recall = 0
         if self._index is None or is_trivial_prompt(query):
             return ""
-        if _as_yes_no(self._decide("retrieve", query, [])) is False:
-            return ""
         try:
             self._idx.refresh()
-            hits = self._idx.search(query, limit=RERANK_CANDIDATES)
+            hits = self._idx.search(query, limit=SEARCH_CANDIDATES)
         except Exception as exc:
             logger.warning("iollo_notes prefetch search failed: %s", type(exc).__name__)
             return ""
         if not hits:
             return ""
-        ids = [h["id"] for h in hits]
-        scores = _as_scores(self._decide("rerank", query, [self._candidate(h) for h in hits]), ids)
-        if scores:
-            order = {note_id: i for i, note_id in enumerate(ids)}
-            hits = sorted(hits, key=lambda h: (-scores.get(h["id"], float("-inf")), order[h["id"]]))
         kept = hits[:PREFETCH_KEEP]
         self._last_recall = len(kept)
         return "## Memory notes (use memory_read for the whole note)\n" + "\n".join(
@@ -498,10 +409,79 @@ class IolloNotesProvider(MemoryProvider):
         return tool_result({"id": note_id, "content": text, "links": notes_mod.links(text)})
 
     def _tool_note(self, args: Dict[str, Any]) -> str:
+        action = str(args.get("action") or "record")
+        if action != "record":
+            return tool_result(self._change_note(action, args))
         return tool_result(self.record_fact(
             str(args.get("fact") or ""), type_hint=args.get("type_hint") or None,
             about=args.get("about") or None, valid_until=args.get("valid_until") or None,
         ))
+
+    def _change_note(self, action: str, args: Dict[str, Any]) -> Dict[str, Any]:
+        """Owner-scoped, optimistic edits of one retained note; never an all-store forget."""
+        from tools.memory_tool_store import MemoryStore, _scan_memory_content
+        from tools.skill_provenance import is_unattended_review
+
+        if is_unattended_review():
+            raise ValueError("Unattended review cannot correct or remove retained notes; use an owner-directed turn")
+        if action not in {"correct", "remove", "remove_note"}:
+            raise ValueError("Unknown memory_note action")
+        note_id = str(args.get("id") or "")
+        if notes_mod.path_errors(notes_mod.note_path(note_id)):
+            raise ValueError("A valid exact note id is required")
+        expected = args.get("expected_content")
+        if not isinstance(expected, str) or not expected:
+            raise ValueError("Read the note first and supply its complete expected_content")
+        fact = str(args.get("fact") or "")
+        replacement = notes_mod.one_line(str(args.get("replacement") or ""))
+        if action == "correct":
+            if not replacement:
+                raise ValueError("replacement is required")
+            if error := _scan_memory_content(replacement):
+                raise ValueError(error)
+        path = self.notes_dir / notes_mod.note_path(note_id)
+        profile_state = "unchanged"
+        with self._write_lock, MemoryStore._file_lock(self.notes_dir):
+            if path.parent.is_symlink() or path.is_symlink() or not path.is_file():
+                raise ValueError("Note not found or unsafe path")
+            content = path.read_text(encoding="utf-8")
+            if content != expected:
+                raise ValueError("Note changed; read it again before correcting/removing")
+            if action == "remove_note":
+                path.unlink()
+            else:
+                note = notes_mod.parse(content)
+                matches = [item for item in note.facts if item.text == fact]
+                if len(matches) != 1:
+                    raise ValueError("fact must match exactly one existing fact; no changes made")
+                target = matches[0]
+                if action == "correct":
+                    provenance = self.device + (f", conversation {self._session_id}" if self._session_id else "")
+                    corrected = notes_mod.Fact(_today(), replacement, provenance=provenance)
+                    note.body[note.body.index(target)] = corrected
+                else:
+                    note.body.remove(target)
+                note.updated = _today()
+                rendered = notes_mod.render(note)
+                if problems := notes_mod.validate(notes_mod.note_path(note_id), rendered):
+                    raise ValueError("Invalid note edit: " + "; ".join(problems))
+                self._write_atomic(path, rendered)
+            profile = self.notes_dir / notes_mod.PROFILE_NAME
+            if profile.is_file() and not profile.is_symlink():
+                head = profile.read_text(encoding="utf-8-sig")[:400]
+                if head.startswith(("# Profile\nGenerated from memory notes on ",
+                                    "# Profile\nCurrent focus from the owner's devices; the full profile follows the next memory pass")):
+                    profile.unlink()
+                    profile_state = "invalidated; normal maintenance rebuilds it"
+                else:
+                    profile_state = "handwritten profile retained; inspect separately if it contains this fact"
+        self._idx.refresh()
+        return {"success": True, "action": action, "id": note_id,
+                "scope": "one note" if action == "remove_note" else "one fact in one note",
+                "profile": profile_state,
+                "retained": ["conversation history", "learned skills", "original sources"],
+                "limitation": "Old retained evidence may be learned again; this is not complete cross-store forgetting. "
+                              "Stored prompts in existing conversations may still contain earlier context."}
 
     # -- recall (the Mac's own index; the Mac is a tool) -----------------------------------------
 
@@ -588,7 +568,7 @@ class IolloNotesProvider(MemoryProvider):
 
     def record_fact(self, fact: str, *, type_hint: Optional[str] = None, about: Optional[str] = None,
                     valid_until: Optional[str] = None, provenance: Optional[str] = None) -> Dict[str, Any]:
-        """Route one fact to a note (Jev, else the best hit, else a new note) and append it."""
+        """Append a fact to a strong local match or a new typed note."""
         fact = notes_mod.one_line(fact)
         about = notes_mod.one_line(about or "") or None
         if not fact:
@@ -604,28 +584,16 @@ class IolloNotesProvider(MemoryProvider):
         self._idx.refresh()
         query = f"{about} {fact}" if about else fact
         hits = self._idx.search(query, limit=ROUTE_CANDIDATES)
-        target_id, new_type = self._route(fact if not about else f"About {about}: {fact}", hits)
-        if target_id is None:
-            best = hits[0] if hits else None
-            if best and best["score"] >= ROUTE_MIN_SCORE and (not type_hint or best["type"] == type_hint):
-                target_id = best["id"]
-            else:
-                new_type = new_type or type_hint or "preference"
+        best = hits[0] if hits else None
+        if best and best["score"] >= ROUTE_MIN_SCORE and (not type_hint or best["type"] == type_hint):
+            target_id, new_type = best["id"], None
+        else:
+            target_id, new_type = None, type_hint or "preference"
         if provenance is None:
             provenance = self.device + (f", conversation {self._session_id}" if self._session_id else "")
         note_id, created = self._append(target_id, new_type, fact, about, valid_until, provenance)
         self._idx.refresh()
         return {"success": True, "id": note_id, "created": created}
-
-    def _route(self, state: str, hits: List[Dict[str, Any]]):
-        answer = _as_choice(self._decide("route", state, [self._candidate(h) for h in hits]))
-        if answer is None:
-            return None, None
-        if answer.startswith("new:") and answer[4:] in notes_mod.TYPE_FOLDERS:
-            return None, answer[4:]
-        if answer in {h["id"] for h in hits}:
-            return answer, None
-        return None, None  # Jev may only pick among the options we built
 
     def _append(self, target_id: Optional[str], new_type: Optional[str], fact: str, about: Optional[str],
                 valid_until: Optional[str], provenance: str):

@@ -116,7 +116,6 @@ class Stub:
 @pytest.fixture
 def stub(monkeypatch):
     s = Stub()
-    monkeypatch.setenv("IOLLO_TEST_SYNC_KEY", "fake-sync-key")
     monkeypatch.setenv("RELAY_URL", s.base)
     monkeypatch.setenv("RELAY_TOKEN", "fake-relay-token")
     yield s
@@ -126,8 +125,7 @@ def stub(monkeypatch):
 @pytest.fixture
 def provider(tmp_path, stub):
     write_fixture(tmp_path / "memory-notes")
-    p = IolloNotesProvider({"decide_url": stub.base + "/memory/decide", "decide_token_env": "IOLLO_TEST_SYNC_KEY",
-                            "device": "box"}, embedder=None)
+    p = IolloNotesProvider({"device": "box"}, embedder=None)
     p.initialize("sess-fake", hermes_home=str(tmp_path), platform="cli")
     yield p
     p.shutdown()
@@ -200,7 +198,7 @@ def test_recall_says_plainly_when_the_mac_cannot_be_searched(provider, stub, mon
 def test_recall_without_a_relay_token_says_the_mac_is_not_connected(tmp_path, monkeypatch):
     monkeypatch.delenv("RELAY_TOKEN", raising=False)
     write_fixture(tmp_path / "memory-notes")
-    p = IolloNotesProvider({"decide_url": "", "device": "box"}, embedder=None)
+    p = IolloNotesProvider({"device": "box"}, embedder=None)
     p.initialize("sess-fake", hermes_home=str(tmp_path), platform="cli")
     out = json.loads(p.handle_tool_call("recall", {"query": "porto lease"}))
     assert out["mac"] == "not_connected" and "hits" not in out and "error" in out
