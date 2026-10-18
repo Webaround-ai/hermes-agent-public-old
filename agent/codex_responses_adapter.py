@@ -595,17 +595,12 @@ def _chat_messages_to_responses_input(
     def emit(new_items: List[Dict[str, Any]], msg: Dict[str, Any]) -> None:
         items.extend(new_items)
         item_sources.extend([msg] * len(new_items))
-    from agent.reasoning_updates import reasoning_updates
-    updates = reasoning_updates(messages, current_issuer_model)
-    for message_index, msg in enumerate(messages):
+    for msg in messages:
         if not isinstance(msg, dict):
             continue
         role = msg.get("role")
         if role == "tool":
             emit(_tool_output_items(msg, wire_ids=wire_ids), msg)
-            update = updates.get(message_index)
-            if update:
-                emit([update], msg)
             continue
         if role not in {"user", "assistant"}:
             continue

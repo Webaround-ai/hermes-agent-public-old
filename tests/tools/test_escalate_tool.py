@@ -1,8 +1,8 @@
 """escalate: advice-only child on the configured tier (tools/escalate_tool.py).
 
 Contracts: not advertised unless delegation.escalate names a configured tier; caps per task and per day
-are enforced in code before (and regardless of) the escalate_gate hook; a gate refusal's reason reaches
-the agent and costs nothing; the advisor child is read-only (no terminal/file/delegation/sends) on the
+are enforced in code before launching the advisor; the advisor child is read-only
+(no terminal/file/delegation/sends) on the
 tier's model and effort; children can never escalate.
 """
 
@@ -16,7 +16,6 @@ import tools.delegate_tool as dt
 import tools.delegate_tool_config as dtc
 import tools.escalate_tool as et
 from hermes_cli import plugins
-from hermes_cli.plugins import PluginManager
 
 CFG = {
     "tiers": {"opus_high": {"model": "anthropic/claude-opus-5.5", "reasoning_effort": "high"},
@@ -37,13 +36,6 @@ def _reset():
 def _use_cfg(monkeypatch, cfg):
     monkeypatch.setattr(dtc, "_load_config", lambda: cfg)
     monkeypatch.setattr(dt, "_load_config", lambda: cfg)
-
-
-def _install_gate(monkeypatch, *callbacks):
-    mgr = PluginManager()
-    mgr._discovered = True
-    mgr._hooks["escalate_gate"] = list(callbacks)
-    monkeypatch.setattr(plugins, "get_plugin_manager", lambda: mgr)
 
 
 def _parent(turn="turn-1", depth=0):
@@ -103,46 +95,6 @@ def test_caps_per_task_and_per_day_are_enforced_in_code(monkeypatch):
     assert len(calls) == 3
 
 
-def test_gate_refusal_reason_reaches_the_agent_and_costs_nothing(monkeypatch):
-    _use_cfg(monkeypatch, CFG)
-    calls = _fake_advisor(monkeypatch)
-    seen = {}
-
-    def gate(**kw):
-        seen.update(kw)
-        return {"action": "continue", "reason": "the FK error names the table; reorder and retry."}
-
-    _install_gate(monkeypatch, gate)
-    out = json.loads(et.escalate(**ARGS, parent_agent=_parent()))
-    assert out["escalated"] is False
-    assert "the FK error names the table; reorder and retry." in out["reason"]
-    assert calls == []
-    assert seen["question"] == ARGS["question"] and seen["tier"] == "opus_high"
-    assert (seen["max_per_task"], seen["max_per_day"]) == (2, 3)
-    assert et.usage(_parent()) == (0, 0)  # refused escalations are not counted
-
-
-def test_gate_cannot_allow_past_a_cap(monkeypatch):
-    _use_cfg(monkeypatch, {**CFG, "escalate": {"tier": "opus_high", "max_per_task": 0, "max_per_day": 10}})
-    calls = _fake_advisor(monkeypatch)
-    asked = []
-    _install_gate(monkeypatch, lambda **_: asked.append(1) or "escalate")
-    out = json.loads(et.escalate(**ARGS, parent_agent=_parent()))
-    assert out["escalated"] is False and calls == [] and asked == []
-
-
-def test_broken_gate_means_the_default_escalate(monkeypatch):
-    _use_cfg(monkeypatch, CFG)
-    calls = _fake_advisor(monkeypatch)
-
-    def boom(**_):
-        raise RuntimeError("gate down")
-
-    _install_gate(monkeypatch, boom)
-    assert json.loads(et.escalate(**ARGS, parent_agent=_parent()))["escalated"] is True
-    assert len(calls) == 1
-
-
 def test_children_can_never_escalate(monkeypatch):
     from tools.delegate_tool_toolsets import _blocked_toolsets_for_role
     _use_cfg(monkeypatch, CFG)
@@ -154,15 +106,19 @@ def test_children_can_never_escalate(monkeypatch):
 
 def test_advisor_runs_read_only_on_the_tier_model_and_effort(monkeypatch):
     # Orchestration on: an ordinary child would get `delegation` back; the advisor must not.
-    _use_cfg(monkeypatch, {**CFG, "orchestrator_enabled": True, "max_spawn_depth": 3})
+    _use_cfg(monkeypatch, {**CFG, "orchestrator_enabled": True, "max_spawn_depth": 3,
+                          "fallback_providers": [{"provider": "openrouter", "model": "cheap-model"}]})
     monkeypatch.setattr(dt, "_get_orchestrator_enabled", lambda: True)
     monkeypatch.setattr(dt, "_get_max_spawn_depth", lambda: 3)
+    parent = _parent()
+    parent.enabled_toolsets.append("mcp-private")
+    parent._fallback_chain = [{"provider": "openrouter", "model": "another-model"}]
     with patch("run_agent.AIAgent") as MockAgent:
         child = MagicMock()
         child.run_conversation.return_value = {"final_response": "Run B first, then A.", "completed": True,
                                                "api_calls": 2}
         MockAgent.return_value = child
-        out = json.loads(et.escalate(**ARGS, parent_agent=_parent()))
+        out = json.loads(et.escalate(**ARGS, parent_agent=parent))
     kwargs = MockAgent.call_args.kwargs
     assert out["escalated"] is True and out["advice"] == "Run B first, then A."
     assert (out["tier"], out["model"], out["reasoning_effort"]) == ("opus_high", "anthropic/claude-opus-5.5", "high")
@@ -171,6 +127,13 @@ def test_advisor_runs_read_only_on_the_tier_model_and_effort(monkeypatch):
     assert set(kwargs["enabled_toolsets"]) <= set(et.ESCALATE_READONLY_TOOLSETS)
     assert {"web", "vision", "session_search"} <= set(kwargs["enabled_toolsets"])
     assert "delegation" in kwargs["disabled_toolsets"]
+    assert not kwargs["fallback_model"]
+    assert parent.model == "anthropic/claude-sonnet-5"
+    assert parent.reasoning_config == {"enabled": True, "effort": "low"}
+    from model_tools import _select_tool_names
+    advisor_tools = _select_tool_names(kwargs["enabled_toolsets"], kwargs["disabled_toolsets"], True)
+    assert not ({"terminal", "execute_code", "read_file", "write_file", "send_message",
+                 "delegate_task", "escalate", "cronjob_manage", "memory"} & advisor_tools)
     # The brief carries everything the cold advisor needs.
     prompt = kwargs["ephemeral_system_prompt"]
     for part in ARGS.values():
@@ -188,28 +151,15 @@ LEVELS = {
 def test_first_call_in_a_turn_uses_level_0_and_later_calls_level_1(monkeypatch):
     _use_cfg(monkeypatch, LEVELS)
     calls = _fake_advisor(monkeypatch)
-    levels = []
-    _install_gate(monkeypatch, lambda level, tier, **_: levels.append((level, tier)) or None)
     turn = _parent("turn-1")
     outs = [json.loads(et.escalate(**ARGS, parent_agent=turn)) for _ in range(3)]
     assert [o["advised_by"] for o in outs] == ["anthropic/claude-opus-5.5", "anthropic/claude-fable-5.1",
                                                "anthropic/claude-fable-5.1"]
     assert [o["level"] for o in outs] == [0, 1, 2]
     assert "anthropic/claude-opus-5.5" in outs[0]["note"]
-    assert levels == [(0, "opus_high"), (1, "fable"), (2, "fable")]
     assert [c["model"] for c in calls] == [o["advised_by"] for o in outs]
     # A new turn starts again at level 0.
     assert json.loads(et.escalate(**ARGS, parent_agent=_parent("turn-2")))["tier"] == "opus_high"
-
-
-def test_a_declined_escalation_does_not_raise_the_level(monkeypatch):
-    _use_cfg(monkeypatch, LEVELS)
-    _fake_advisor(monkeypatch)
-    answers = iter(["continue", "escalate"])
-    _install_gate(monkeypatch, lambda **_: next(answers))
-    turn = _parent("turn-1")
-    assert json.loads(et.escalate(**ARGS, parent_agent=turn))["escalated"] is False
-    assert json.loads(et.escalate(**ARGS, parent_agent=turn))["tier"] == "opus_high"
 
 
 def test_legacy_single_tier_key_is_a_one_level_list(monkeypatch):
@@ -240,40 +190,26 @@ def test_caps_still_enforced_when_set_alongside_levels(monkeypatch):
     assert refused["escalated"] is False and "this task" in refused["reason"]
 
 
-def test_reasoning_update_replays_without_rewriting_parent_or_starting_advisor(monkeypatch):
-    from agent.codex_responses_adapter import _chat_messages_to_responses_input, _preflight_codex_api_kwargs
+def test_direct_advice_ignores_obsolete_gate_and_never_replays_parent_upgrade(monkeypatch):
+    from agent.codex_responses_adapter import _chat_messages_to_responses_input
     from agent.inline_tool_executors import INLINE_TOOL_EXECUTORS, InlineToolContext
+    # Old persisted policy and installed callbacks cannot block or mutate direct advice.
     cfg = {**CFG, "escalate": {**CFG["escalate"], "reasoning_updates": True, "require_gate": True}}
     _use_cfg(monkeypatch, cfg)
     calls = _fake_advisor(monkeypatch)
+    seen = []
+    monkeypatch.setattr(plugins, "has_hook", lambda hook: seen.append(hook) or True)
+    monkeypatch.setattr(plugins, "invoke_hook", lambda *a, **kw: ["think_harder"])
     parent = _parent()
     parent.model, parent.api_mode = "openai/gpt-6-luna", "codex_responses"
-    _install_gate(monkeypatch, lambda **kw: "think_harder")
-    messages = [{"role": "user", "content": "Solve this problem"},
-                {"role": "assistant", "content": None, "tool_calls": [
-                    {"id": "call_1", "type": "function", "function": {"name": "escalate", "arguments": json.dumps(ARGS)}}]}]
-    before = _chat_messages_to_responses_input(messages, current_issuer_model="gpt-6-luna")
-    result = INLINE_TOOL_EXECUTORS["escalate"](parent, ARGS, InlineToolContext("task", messages=messages))
-    messages.append({"role": "tool", "tool_call_id": "call_1", "content": result})
-    after = _chat_messages_to_responses_input(messages, current_issuer_model="gpt-6-luna")
-    assert after[:len(before)] == before
-    assert after[-1] == {"type": "configuration_update", "reasoning": {"effort": "high"}}
-    # The production transport preflights after conversion; this must reach the wire intact.
-    wire = _preflight_codex_api_kwargs({"model": parent.model, "instructions": "Stable system",
-                                       "input": after, "reasoning": parent.reasoning_config})
-    assert wire["input"] == after
-    assert wire["reasoning"]["effort"] == "low"
-    assert parent.reasoning_config["effort"] == "low" and not calls
-    assert et.current_reasoning_effort(parent, messages) == "high"
-    assert not any(x.get("type") == "configuration_update" for x in
-                   _chat_messages_to_responses_input(messages, current_issuer_model="gpt-6.1-sol"))
-    again = json.loads(et.escalate(**ARGS, parent_agent=parent, messages=messages))
-    assert "reasoning_update" not in again and not calls
-
-
-def test_required_routing_gate_fails_closed_without_launching_advisor(monkeypatch):
-    _use_cfg(monkeypatch, {**CFG, "escalate": {**CFG["escalate"], "require_gate": True}})
-    _install_gate(monkeypatch, lambda **kw: None)
-    calls = _fake_advisor(monkeypatch)
-    assert json.loads(et.escalate(**ARGS, parent_agent=_parent()))["escalated"] is False
-    assert not calls
+    result = json.loads(INLINE_TOOL_EXECUTORS["escalate"](parent, ARGS, InlineToolContext("task")))
+    assert result["escalated"] is True and len(calls) == 1
+    assert "escalate_gate" not in seen and "delegation_tier_chooser" not in seen
+    assert parent.model == "openai/gpt-6-luna"
+    assert parent.reasoning_config == {"enabled": True, "effort": "low"}
+    messages = [{"role": "assistant", "content": None, "tool_calls": [
+        {"id": "call_1", "type": "function", "function": {"name": "escalate", "arguments": "{}"}}]},
+        {"role": "tool", "tool_call_id": "call_1", "content": json.dumps({"escalated": False,
+         "reasoning_update": {"model": parent.model, "effort": "high"}})}]
+    wire = _chat_messages_to_responses_input(messages, current_issuer_model="gpt-6-luna")
+    assert not any(item.get("type") == "configuration_update" for item in wire)

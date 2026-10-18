@@ -208,17 +208,11 @@ VALID_HOOKS: Set[str] = {
     # when delegation.tiers is set. Kwargs: goal, context, task_index, task_count, tiers (dict
     # name -> {model, provider, reasoning_effort}), default_tier, parent_session_id. Return a
     # tier name. Deadline delegation.tier_chooser_timeout_ms (default 3000).
-    # escalate_gate: before each `escalate` dispatch (caps are checked first, in code). Kwargs:
-    # question, context, constraints, wanted, tier, level (0-based: 0 = first escalation in the
-    # turn), model, used_this_task (incl. this call), used_today, max_per_task, max_per_day (None =
-    # unlimited), session_id, turn_id. Return "escalate" | "continue" or
-    # {"action": "escalate"|"continue", "reason": str}; the reason of a "continue" reaches the
-    # agent. Deadline delegation.escalate.gate_timeout_ms (default 5000).
     # busy_input_chooser: per message arriving while a gateway turn runs. Kwargs: text,
     # configured_mode, running_goal, elapsed_seconds, session_key, platform. Return
     # "append" (= steer) | "steer" | "interrupt" | "queue". Hard deadline 400 ms. The existing
     # interrupt->queue demotions (active subagents, compression in flight) keep priority.
-    "delegation_tier_chooser", "escalate_gate", "busy_input_chooser",
+    "delegation_tier_chooser", "busy_input_chooser",
 }
 
 # Hooks whose directive the shell-hook response parser has no channel for. VALID_HOOKS doubles as
