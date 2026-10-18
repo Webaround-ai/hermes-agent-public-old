@@ -278,6 +278,8 @@ def test_janitor_keeps_the_shared_browser_alive_while_a_human_holds_the_lease(mo
     from tools.bot_desktop import lease
 
     monkeypatch.setattr(runtime, "published_env", lambda: {"DISPLAY": ":37"})
+    # The HUMAN exemption also protects local sessions outside headed desktop ownership.
+    monkeypatch.setattr(session._cloud, "_is_headed_mode", lambda: False)
     holder = {"human": True}
     monkeypatch.setattr(lease, "human_holds", lambda *a, **k: holder["human"])
     reaped: list = []
@@ -303,7 +305,7 @@ def test_janitor_keeps_the_shared_browser_alive_while_a_human_holds_the_lease(mo
 
 def test_daemon_idle_timer_defers_to_the_janitor_only_for_the_shared_headed_browser(monkeypatch):
     """The agent-browser daemon cannot see the lease, so on the Bot Desktop its self-termination timer steps
-    back and the lease-aware janitor owns the browser's lifetime; headless browsing keeps the mirror."""
+    back and the desktop owns the browser's idle lifetime; headless browsing keeps the mirror."""
     from tools import browser_tool_session as session
 
     monkeypatch.setattr(session._bt, "BROWSER_SESSION_INACTIVITY_TIMEOUT", 120)
@@ -352,3 +354,86 @@ def test_a_real_user_pin_is_still_honoured(tmp_path, monkeypatch):
 
     env = browser.env_for_agent({"AGENT_BROWSER_EXECUTABLE_PATH": str(mine)})
     assert env["AGENT_BROWSER_EXECUTABLE_PATH"] == str(mine)
+
+
+@pytest.fixture
+def desktop_browser_lifecycle(tmp_path, monkeypatch):
+    from tools import browser_tool_lifecycle as lifecycle, browser_tool_session as session
+    from tools.bot_desktop import lease
+
+    for attr in ("_active_sessions", "_session_last_activity", "_session_owner_homes",
+                 "_cleanup_failures", "_last_active_session_key", "_suspect_browser_sessions"):
+        monkeypatch.setattr(lifecycle._bt, attr, {})
+    monkeypatch.setattr(lifecycle._bt, "_recording_sessions", set())
+    monkeypatch.setattr(lifecycle._bt, "BROWSER_SESSION_INACTIVITY_TIMEOUT", 120)
+    monkeypatch.setattr(lifecycle._bt, "_is_camofox_mode", lambda: False)
+    monkeypatch.setattr(lifecycle._bt, "_socket_safe_tmpdir", lambda: str(tmp_path))
+    monkeypatch.setattr(lifecycle._bt, "_maybe_stop_recording", lambda *_a: None)
+    monkeypatch.setattr(session._cloud, "_is_headed_mode", lambda: True)
+    monkeypatch.setattr(session._cloud, "_get_cloud_provider", lambda: None)
+    monkeypatch.setattr(session._real_profile, "_real_profile_cdp", lambda: (None, None))
+    monkeypatch.setattr(lifecycle._bt, "_is_browser_use_cli_mode", lambda: False)
+    monkeypatch.setattr(lifecycle, "_start_browser_cleanup_thread", lambda: None)
+    monkeypatch.setattr(session._cdp, "_stop_cdp_supervisor", lambda *_a: None)
+    monkeypatch.setattr(lease, "human_holds", lambda: False)
+    now = [1000.0]
+    monkeypatch.setattr(lifecycle.time, "time", lambda: now[0])
+    screen = {"DISPLAY": ":37"}
+    monkeypatch.setattr(runtime, "published_env", lambda: dict(screen))
+    closed = []
+    monkeypatch.setattr(session, "_run_browser_command",
+                        lambda task_id, *a, **kw: closed.append(task_id) or {"success": True})
+    return lifecycle, session, now, screen, closed
+
+
+def test_shared_headed_browser_outlives_agent_idle_and_cleans_after_desktop_stop(desktop_browser_lifecycle):
+    lifecycle, session, now, screen, closed = desktop_browser_lifecycle
+    # Cloud bootstrap registers its local session BEFORE starting the screen.
+    screen.clear()
+    key = "iollo-browser-lifecycle::local"
+    original = session._get_session_info(key)
+    screen["DISPLAY"] = ":37"
+    lifecycle._bt._active_sessions["private"] = {
+        "session_name": "private", "bb_session_id": None, "features": {"cdp_override": True}}
+    lifecycle._bt._session_last_activity["private"] = now[0]
+    now[0] += 15 * 60  # approval wait well past the 120 second browser timeout
+    lifecycle._cleanup_inactive_browser_sessions()
+    assert closed == ["private"]
+    assert lifecycle._bt._active_sessions[key] is original
+    assert lifecycle._bt._session_last_activity[key] == 1000.0  # no fake heartbeat
+    lifecycle._cleanup_inactive_browser_sessions()
+    assert closed == ["private"]
+
+    screen.clear()  # desktop stop/death releases lifetime ownership
+    lifecycle._cleanup_inactive_browser_sessions()
+    assert closed == ["private", key]
+    assert key not in lifecycle._bt._active_sessions
+    assert key not in lifecycle._bt._session_last_activity
+    screen["DISPLAY"] = ":37"  # display reuse does not restore the old session
+    replacement = session._get_session_info(key)
+    assert replacement["session_name"] != original["session_name"]
+    lifecycle.cleanup_browser(key)  # explicit close still works while the screen runs
+    assert key not in lifecycle._bt._active_sessions
+    assert closed == ["private", key, key]
+
+
+@pytest.mark.parametrize("info,headed", [
+    ({"features": {"local": True, "lightpanda": True}}, True),
+    ({"features": {"local": True, "real_profile": True}}, True),
+    ({"features": {"local": True}, "cdp_url": "ws://independent"}, True),
+    ({"features": {"local": True}, "bb_session_id": "cloud"}, True),
+    ({"features": {"cdp_override": True}}, True),
+    ({"features": {"local": True}}, False),
+])
+def test_running_desktop_does_not_own_other_browser_idle_lifetimes(
+        desktop_browser_lifecycle, monkeypatch, info, headed):
+    lifecycle, session, now, _screen, _closed = desktop_browser_lifecycle
+    monkeypatch.setattr(session._cloud, "_is_headed_mode", lambda: headed)
+    assert session.desktop_owns_browser_lifetime(info) is False
+    lifecycle._bt._active_sessions["other"] = info
+    lifecycle._bt._session_last_activity["other"] = now[0]
+    cleaned = []
+    monkeypatch.setattr(lifecycle, "cleanup_browser", lambda key: cleaned.append(key))
+    now[0] += 121
+    lifecycle._cleanup_inactive_browser_sessions()
+    assert cleaned == ["other"]

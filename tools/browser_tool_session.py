@@ -180,13 +180,30 @@ _SHARED_HEADED_DAEMON_IDLE_SECONDS = 24 * 3600
 def _daemon_idle_timeout_seconds() -> int:
     """The daemon's self-termination idle timer. The bot's headed Chromium on the Bot Desktop screen is
     shared with a human who may take the lease to log in: the agent is idle by definition then, so the
-    daemon's own timer must not decide (it cannot see the lease); the lease-aware Python janitor owns that
-    browser's lifetime, and a crashed hermes leaves it to the orphan reaper (#110064)."""
+    daemon's own timer must not decide (it cannot see the desktop lifetime). The desktop owns that
+    browser's idle lifetime, and a crashed hermes leaves it to the orphan reaper (#110064)."""
     if _cloud._is_headed_mode():
         from tools.bot_desktop.runtime import published_env
         if published_env().get("DISPLAY"):
             return _SHARED_HEADED_DAEMON_IDLE_SECONDS
     return _bt.BROWSER_SESSION_INACTIVITY_TIMEOUT
+
+
+def desktop_owns_browser_lifetime(session_info: Dict[str, Any]) -> bool:
+    """Plain local headed Chromium lives as long as its running Bot Desktop.
+
+    Resolve the screen at cleanup time: first-use auto-start may follow session creation.
+    Session provenance excludes other backends even when this profile has a desktop.
+    This affects idle cleanup only; explicit close and broken-session recovery still run.
+    """
+    features = session_info.get("features") or {}
+    if (not features.get("local") or features.get("lightpanda") or features.get("real_profile")
+            or features.get("cdp_override") or session_info.get("cdp_url")
+            or session_info.get("bb_session_id") or _bt._is_camofox_mode()
+            or not _cloud._is_headed_mode()):
+        return False
+    from tools.bot_desktop.runtime import published_env
+    return bool(published_env().get("DISPLAY"))
 
 
 def human_holds_shared_browser(session_info: Dict[str, Any]) -> bool:
