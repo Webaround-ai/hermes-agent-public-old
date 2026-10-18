@@ -485,3 +485,16 @@ Focused native regressions cover real dispatch and SQLite transcript persistence
 calls, mixed and explicitly concurrent/segmented batches, accepted existing tasks, refused/future
 starts, persistence failure and subsequent owner turns. Deployment evidence belongs in cloud STATE;
 source presence does not identify an installed runtime.
+
+
+## Shared headed browser idle lifetime — source change, 2026-10-18
+
+The browser inactivity janitor defers plain local headed Chromium to the running Bot Desktop's
+lifetime. This keeps the shared screen browser alive through an approval wait even while input is
+agent-owned. The check uses existing session backend provenance, headed policy and the currently
+published desktop; it also covers bootstrap that registers the local session before starting the
+screen. It does not refresh activity. Once the desktop is down, an already idle session can be
+cleaned normally. Explicit shutdown, backend recovery, session tracking and orphan cleanup remain
+active. Cloud, independent CDP, real-profile, Lightpanda, Camofox and headless sessions retain their
+existing idle cleanup; the HUMAN takeover exemption remains unchanged. No heartbeat, timer increase,
+lease or additional lifecycle is introduced. This source change is not deployment evidence.

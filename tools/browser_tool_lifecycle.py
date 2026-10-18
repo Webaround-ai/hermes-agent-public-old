@@ -161,6 +161,12 @@ def _cleanup_inactive_browser_sessions():
 
     for task_id in sessions_to_cleanup:
         with _session_owner_scope(task_id):
+            with _bt._cleanup_lock:
+                session_info = _bt._active_sessions.get(task_id)
+            if session_info and _session.desktop_owns_browser_lifetime(session_info):
+                # Approval waits are idle agent time too. The desktop's own idle stop
+                # owns this shared Chromium, regardless of who currently holds input.
+                continue
             if _human_holds_shared_browser(task_id):
                 # A human took the bot's screen (login, 2FA) — the agent is idle BECAUSE they are working.
                 _update_session_activity(task_id)
