@@ -69,7 +69,7 @@ async def test_cron_run_waits_for_the_owner_and_resumes_on_answer(cron_env, answ
         assert status["status"] == "waiting_for_approval"
         assert status["approval"]["choices"] == ["once", "deny"]
 
-        resp = await cli.post(f"/v1/runs/{RUN_ID}/approval", json={"choice": answer}, headers=AUTH)
+        resp = await cli.post(f"/v1/runs/{RUN_ID}/approval", json={"choice": answer, "request_id": status["approval"]["request_id"]}, headers=AUTH)
         assert resp.status == 200
         result = await asyncio.wait_for(run, 10)
         assert result["approved"] is approved
@@ -93,3 +93,38 @@ def test_cron_run_without_a_bridge_still_blocks(cron_env):
     result = _purchase_in_cron_run()
     assert result["approved"] is False
     assert "no interactive user or gateway" in result["message"]
+
+
+@pytest.mark.asyncio
+async def test_reused_cron_session_refuses_missing_and_previous_approval_identity(cron_env):
+    adapter = APIServerAdapter(PlatformConfig(enabled=True, extra={"key": "sk-secret"}))
+    async with TestClient(TestServer(_app(adapter))) as cli:
+        adapter._cron_bridge_loop = asyncio.get_running_loop()
+        approval_mod.set_cron_run_bridge_provider(adapter._open_cron_run_bridge)
+        prior_request_id = None
+        for attempt in range(2):
+            run = asyncio.ensure_future(asyncio.to_thread(_purchase_in_cron_run))
+            for _ in range(200):
+                code, status = await _status(cli)
+                if code == 200 and status["status"] == "waiting_for_approval":
+                    break
+                await asyncio.sleep(0.02)
+            assert status["status"] == "waiting_for_approval"
+            request_id = status["approval"]["request_id"]
+            for body in ({"choice": "once"}, {"choice": "once", "resolve_all": True}):
+                missing = await cli.post(f"/v1/runs/{RUN_ID}/approval", json=body, headers=AUTH)
+                assert missing.status == 400
+                assert (await missing.json())["error"]["code"] == "approval_request_required"
+                assert not run.done()
+            if attempt:
+                assert request_id != prior_request_id
+                stale = await cli.post(f"/v1/runs/{RUN_ID}/approval",
+                                       json={"choice": "once", "request_id": prior_request_id}, headers=AUTH)
+                assert stale.status == 409
+                assert (await stale.json())["error"]["code"] == "approval_not_pending"
+                assert not run.done()
+            exact = await cli.post(f"/v1/runs/{RUN_ID}/approval",
+                                   json={"choice": "deny", "request_id": request_id}, headers=AUTH)
+            assert exact.status == 200 and (await exact.json())["request_id"] == request_id
+            assert (await asyncio.wait_for(run, 10))["approved"] is False
+            prior_request_id = request_id

@@ -524,3 +524,9 @@ and resume-size checks, then calls its ordinary conversation runner. The executi
 the resolved session before tools. Task output can be selected by execution id, excluding prior
 attempt replies. Iollo publication uses distinct execution identities while preserving the same
 session. No alternate scheduler, model or context serializer is introduced.
+
+### Exact approvals for resumed cron sessions (2026-10-18)
+
+The native approval endpoint requires its existing `request_id` for runs registered by the cron bridge.
+A resumed session retains its identity, but each approval remains a distinct request: a stale card
+cannot resolve the current request. Noncron API and room-grant behavior remain unchanged.
