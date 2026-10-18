@@ -454,3 +454,34 @@ not an OS sandbox or a protection against arbitrary host code execution.
 including runs whose creation acknowledgement was lost. The shared runtime uses
 it to quiesce a profile before removing its storage. No input/output is returned.
 Cloud's `docs/SHARED-AGENTS.md` owns deployment and group-membership semantics.
+
+## Native execution handoff — source change, 2026-10-18
+
+Based on `bd5fd42fccba`, trusted plugins may register
+`execution_handoff=predicate(actual_args, result)`. The callback returns a nonempty acknowledgement
+of at most 2,000 characters when a successful tool transferred execution, or `None`/`False` to
+continue. The integration supplies acknowledgement text in the owner's language. A task integration
+uses this only for accepted immediate work, including an accepted existing task on retry; an actual
+refusal or a future schedule continues normally. This metadata is not a model argument or a magic
+field an untrusted tool result can assert.
+
+Native dispatch resolves broker calls to the canonical tool, persists the successful tool result,
+then evaluates the registered callback before admitting another sibling action. Unstarted siblings
+receive persisted no-effect results with their original call IDs. Potential handoffs are sequential
+barriers, including callers that directly request concurrent dispatch; earlier completed calls remain
+recorded. Segmented batches do not launch later segments after transfer. The native turn publishes
+the supplied acknowledgement and completes normally through `tool_ended_turn`, even without model
+prose or the reply-tool `ends_turn` opt-in. A later owner turn starts with no inherited handoff state.
+Ordinary reply-tool turn-ending behavior, stored prompts, model policy and tool pins are unchanged.
+
+A failed canonical result append stops the caller through the existing persistence-failure path.
+A broken registered callback stops further actions with an outcome-check diagnostic rather than
+retrying the completed action. Timeout/unknown dispositions retain the existing native semantics;
+this mechanism does not make task creation itself idempotent or resolve an ambiguous external action.
+The cloud task adapter remains responsible for determining whether the same task accepted the work.
+No shared browser lease, resource isolation or additional planner is introduced by this change.
+
+Focused native regressions cover real dispatch and SQLite transcript persistence for direct/broker
+calls, mixed and explicitly concurrent/segmented batches, accepted existing tasks, refused/future
+starts, persistence failure and subsequent owner turns. Deployment evidence belongs in cloud STATE;
+source presence does not identify an installed runtime.

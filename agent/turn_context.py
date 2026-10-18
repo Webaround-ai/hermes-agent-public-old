@@ -574,6 +574,7 @@ _PER_TURN_RESET_STATE: Tuple[Tuple[str, Any], ...] = (
     ("_pre_verify_nudges", 0),
     # Iollo fork: a round of turn-ending tools ended the turn (agent/turn_tool_round.py).
     ("_turn_ended_by_tool", False),
+    ("_tool_execution_handoff", None),
 )
 
 
