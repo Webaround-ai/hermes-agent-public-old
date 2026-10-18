@@ -86,6 +86,8 @@ def _initialize_schema(conn: sqlite3.Connection) -> None:
         "ON executions(status, claimed_at DESC, id DESC)"
     )
     add_column_if_missing(conn, "executions", "delivery_outcome", "delivery_outcome TEXT")
+    add_column_if_missing(conn, "executions", "stopped_before_action",
+                          "stopped_before_action INTEGER NOT NULL DEFAULT 0")
     add_column_if_missing(conn, "executions", "scheduled_instant", "scheduled_instant TEXT")
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_executions_occurrence "
@@ -278,6 +280,15 @@ def mark_execution_running(execution_id: str) -> Optional[Dict[str, Any]]:
         record = _fetch(conn, execution_id)
     _emit_execution_state(record)
     return record
+
+
+def confirm_stop_before_action(execution_id: str) -> bool:
+    """Native owner-process proof after the agent returned; model-authored errors cannot forge it."""
+    with _transaction() as conn:
+        cur = conn.execute("UPDATE executions SET stopped_before_action=1 WHERE id=? "
+                           "AND status IN ('claimed','running') AND process_id=? AND pid=?",
+                           (execution_id, _PROCESS_ID, os.getpid()))
+        return cur.rowcount == 1
 
 
 def finish_execution(

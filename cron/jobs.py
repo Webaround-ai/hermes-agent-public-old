@@ -2113,6 +2113,7 @@ def resume_job(job_id: str) -> Optional[Dict[str, Any]]:
         "state": "scheduled",
         "paused_at": None,
         "paused_reason": None,
+        "stop_requested": False,
         "next_run_at": next_run_at,
     })
 

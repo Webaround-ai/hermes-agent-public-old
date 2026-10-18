@@ -94,6 +94,7 @@ _CAPABILITY_ENDPOINTS = (
     ("session_update", ("PATCH", "/api/sessions/{session_id}")),
     ("session_delete", ("DELETE", "/api/sessions/{session_id}")),
     ("session_messages", ("GET", "/api/sessions/{session_id}/messages")),
+    ("iollo_task_output", ("GET", "/api/sessions/{session_id}/task-output")),
     ("iollo_task_reports", ("POST", "/api/sessions/{session_id}/task-reports")),
     ("session_fork", ("POST", "/api/sessions/{session_id}/fork")),
     ("session_chat", ("POST", "/api/sessions/{session_id}/chat")),
@@ -1613,6 +1614,7 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
             ("PATCH", "/api/sessions/{session_id}", self._handle_patch_session),
             ("DELETE", "/api/sessions/{session_id}", self._handle_delete_session),
             ("GET", "/api/sessions/{session_id}/messages", self._handle_session_messages),
+            ("GET", "/api/sessions/{session_id}/task-output", self._handle_iollo_task_output),
             ("POST", "/api/sessions/{session_id}/task-reports", self._handle_iollo_task_report),
             ("POST", "/api/sessions/{session_id}/fork", self._handle_fork_session),
             ("POST", "/api/sessions/{session_id}/chat", self._handle_session_chat),
@@ -1631,6 +1633,7 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
             ("PATCH", "/api/jobs/{job_id}", self._handle_update_job),
             ("DELETE", "/api/jobs/{job_id}", self._handle_delete_job),
             ("POST", "/api/jobs/{job_id}/pause", self._handle_pause_job),
+            ("POST", "/api/jobs/{job_id}/stop", self._handle_stop_job),
             ("POST", "/api/jobs/{job_id}/resume", self._handle_resume_job),
             ("POST", "/api/jobs/{job_id}/run", self._handle_run_job)]
         routes.extend(_room_grants._http_routes(self))
@@ -3134,6 +3137,19 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
                 "returned": len(messages)}})
 
     @_require_auth
+    async def _handle_iollo_task_output(self, request: "web.Request") -> "web.Response":
+        """Exact native session output plus canonical scheduled-silence metadata."""
+        response = await self._handle_session_messages(request)
+        if response.status != 200:
+            return response
+        messages = json.loads(response.body).get("data") or []
+        said = [m for m in messages if m.get("role") == "assistant"
+                and isinstance(m.get("content"), str) and m["content"].strip()]
+        last = max(range(len(said)), key=lambda i: (said[i].get("timestamp") or 0, i)) if said else None
+        from gateway.response_filters import autonomous_output
+        return web.json_response(autonomous_output(said[last]["content"] if last is not None else ""))
+
+    @_require_auth
     async def _handle_iollo_task_report(self, request: "web.Request") -> "web.Response":
         """Append one exact-origin task completion as a native, idempotent transcript event.
 
@@ -3167,7 +3183,7 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
         except UnicodeEncodeError:
             text_size = 32_769
         if (task_id is None or generation is None or not isinstance(title, str) or not title.strip()
-                or len(title) > 256 or not isinstance(state, str) or state not in {"done", "failed", "scheduled"}
+                or len(title) > 256 or not isinstance(state, str) or state not in {"done", "failed", "scheduled", "cancelled"}
                 or not isinstance(text, str) or not text.strip() or text_size > 32_768):
             return _error_response("Task report fields are invalid", 400, code="invalid_task_report")
 
@@ -3827,6 +3843,13 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
     async def _handle_pause_job(self, request: "web.Request") -> "web.Response":
         """POST /api/jobs/{job_id}/pause — pause a cron job."""
         return await self._job_lookup_or_mutate(request, _cron_pause, notify=True)
+
+    async def _handle_stop_job(self, request: "web.Request") -> "web.Response":
+        """Persist withdrawal; current actions finish, subsequent native tool dispatch is refused."""
+        from cron.jobs import update_job
+        def stop(job_id):
+            return update_job(job_id, {"enabled": False, "state": "paused", "stop_requested": True})
+        return await self._job_lookup_or_mutate(request, stop, notify=True)
 
     async def _handle_resume_job(self, request: "web.Request") -> "web.Response":
         """POST /api/jobs/{job_id}/resume — resume a paused cron job."""

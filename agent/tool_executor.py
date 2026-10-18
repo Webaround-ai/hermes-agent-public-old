@@ -654,6 +654,9 @@ def _blocked_tool_result(agent, ref: _ToolCallRef, *, block_message: Optional[st
 def _pre_tool_block(agent, ref: _ToolCallRef):
     """Run ``pre_tool_call`` plugin hooks; returns ``(block_message, final_args)`` with any
     hook-modified args applied. Hook failures never block."""
+    from agent.cooperative_stop import stop_requested
+    if stop_requested(agent):
+        return "Execution stopped; this action was not started.", ref.args
     try:
         from hermes_cli.plugins import _dispatch_pre_tool_call_hooks
 
@@ -704,6 +707,10 @@ def _dispatch_authorized_once(
         if guardrail_decision.allows_execution:
             guardrail_decision = None
 
+    from agent.cooperative_stop import stop_requested
+    if block_message is None and stop_requested(agent):
+        block_message = "Execution stopped; this action was not started."
+        block_error_type = "owner_stop"
     if block_message is not None or guardrail_decision is not None:
         _advance_start_order()
         state.blocked = True
@@ -717,9 +724,29 @@ def _dispatch_authorized_once(
     elif ref.name == "skill_manage":
         agent._iters_since_skill = 0
 
+    def _stopped_at_dispatch():
+        if not stop_requested(agent):
+            return None
+        state.blocked = True
+        return _blocked_tool_result(agent, ref,
+            block_message="Execution stopped; this action was not started.",
+            block_error_type="owner_stop", guardrail_decision=None)
+
     from agent.terminal_approval_batch import prepare_current_terminal
     prepare_current_terminal(ref)
+    stopped = _stopped_at_dispatch()
+    if stopped is not None:
+        _advance_start_order()
+        return stopped
     _advance_start_order(lambda: _begin_tool_execution(agent, ref, display_index))
+    # Both terminal approval and ordered concurrent admission can wait. Recheck
+    # after those waits, immediately before the actual side effect, without
+    # signalling any tool which already crossed its admission boundary.
+    stopped = _stopped_at_dispatch()
+    if stopped is not None:
+        return stopped
+    from agent.cooperative_stop import note_action_started
+    note_action_started(agent)
     return _run_with_activity_heartbeat(agent, ref.name, lambda: execute(ref.args))
 
 

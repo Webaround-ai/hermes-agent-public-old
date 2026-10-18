@@ -51,3 +51,23 @@ trace data handling lives in [IOLLO-RUN-TRACE](../IOLLO-RUN-TRACE.md). rc7–rc1
 cloud runtime tags without a published GitHub runtime release as of this review. The "Iollo release" workflow is disabled, so
 tags do not build images; the base image is built by hand (cloud `docs/DEPLOY.md`, "Building the Hermes base by hand").
 A historical train manifest or native runtime bundle must not override the recorded cloud pin.
+
+
+## Cooperative task withdrawal (source change on base `a58f99cc94c4`, 2026-10-18)
+
+Authenticated `POST /api/jobs/{id}/stop` durably pauses future fires and records `stop_requested` on the job.
+Native cron agents check that withdrawal at tool admission and between iterations. Already executing calls are
+allowed to return; no process, payment or tool waiter is killed by this request. The cloud tasks concern keeps
+`stopping` until native execution ends, retains late outcomes, and never retries a withdrawn unknown execution.
+A returned native run confirms zero started actions explicitly before automatic continuation is eligible;
+the box durably claims that handoff once and never automatically retries ambiguous acceptance.
+The task-report append accepts `cancelled` and retains its existing task/generation idempotency. This source
+requires a new Hermes image and matching sandbox concern; no rollout or deployed verification is claimed.
+
+Native `GET /api/sessions/{id}/task-output` authenticates and reads the exact session, returning `{text,silent}`
+using `gateway.response_filters` autonomous semantics. The task concern applies suppression only for successful
+executions; failures keep cleaned prose. This API boundary lets cloud-only tests run without importing Hermes
+or maintaining another silence matcher. Raw native execution history remains intact. Delegated children inherit
+cooperative withdrawal; explicit native resume clears it for future work. Owner task cancellation supersedes a
+previously accepted direction, and only a native `stopped_before_action` execution-ledger proof permits a
+single claimed automatic continuation.

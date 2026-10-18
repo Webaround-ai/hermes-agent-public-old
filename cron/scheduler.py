@@ -2610,12 +2610,26 @@ def run_job(
         agent = _construct_cron_agent(
             AIAgent, job, _cfg, setup, workdir=scope.workdir, session_id=_cron_session_id,
             session_db=_session_db)
+        # Durable owner withdrawal is checked on the executing thread at action boundaries.
+        # Never signal/kill a currently executing payment or abandon its eventual result.
+        from cron.jobs import get_job
+        from agent.cooperative_stop import install_cooperative_stop
+        def withdrawn():
+            current_job = get_job(job_id)
+            return current_job is None or bool(current_job.get("stop_requested"))
+        install_cooperative_stop(agent, withdrawn)
         _audit = _FireAudit(job, job_id, model)
 
         with _cron_run_approval_bridge(_cron_session_id):
             result = _run_agent_with_watchdog(
                 agent, prompt, job, job_id, job_name, scope.task_id, cancel_event,
                 worker_state=_worker_state)
+        from agent.cooperative_stop import stopped_before_action, STOPPED_BEFORE_ACTION
+        if stopped_before_action(agent):
+            from cron.executions import confirm_stop_before_action
+            if execution_id:
+                confirm_stop_before_action(execution_id)
+            return False, _run_doc_header(job, job_name, job_id, prompt) + STOPPED_BEFORE_ACTION, "", STOPPED_BEFORE_ACTION
         final_response = _final_response_from_result(result, job_id, job_name, AIAgent)
         if (setup.fallback_notice and final_response.strip() and not _is_cron_silence_response(final_response)
                 and _cron_failure_marker_error(final_response) is None):

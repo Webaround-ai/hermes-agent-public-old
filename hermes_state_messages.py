@@ -375,8 +375,8 @@ class SessionMessagesMixin:
         """
         if not session_id or not task_id or not generation:
             raise ValueError("task report requires a session, task id, and generation")
-        if state not in {"done", "failed", "scheduled"}:
-            raise ValueError("task report state must be done, failed, or scheduled")
+        if state not in {"done", "failed", "scheduled", "cancelled"}:
+            raise ValueError("task report state must be done, failed, scheduled, or cancelled")
         if not isinstance(content, str) or not content.strip():
             raise ValueError("task report content is required")
         if not isinstance(title, str) or not title.strip():
