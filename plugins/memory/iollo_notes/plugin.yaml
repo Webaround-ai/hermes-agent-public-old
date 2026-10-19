@@ -1,3 +1,3 @@
 name: iollo_notes
 version: 0.1.0
-description: "Iollo notes — typed Markdown notes in $HERMES_HOME/memory-notes, the USER.md profile in every turn, local FTS + vector search, and recall through the connected Mac's own index."
+description: "Iollo recall: searches the connected Mac's own index through the control plane. The only tool; memory itself is Hermes native MEMORY.md/USER.md."
