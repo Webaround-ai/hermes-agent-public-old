@@ -609,47 +609,6 @@ def _run_cli_killing_process_group(cmd, code, env, timeout):
     return subprocess.CompletedProcess(cmd, proc.returncode, stdout, stderr)
 
 
-_WEBMCP_MARKER = "__HERMES_WEBMCP__="
-
-
-def _with_webmcp(code: str) -> str:
-    # Ship trusted source with Hermes, not the agent-editable workspace. The CLI
-    # uses its own interpreter, so importing Hermes through PYTHONPATH is unsafe.
-    source = Path(__file__).with_name("browser_webmcp.py").read_text(encoding="utf-8")
-    return (
-        "import json as _hermes_json\n"
-        "_hermes_webmcp_module = {}\n"
-        f"exec({source!r}, _hermes_webmcp_module)\n"
-        "_hermes_webmcp_discover = _hermes_webmcp_module['install'](globals())\n"
-        "try:\n"
-        f"    exec({code!r}, globals())\n"
-        "finally:\n"
-        f"    print('\\n{_WEBMCP_MARKER}' + _hermes_json.dumps(_hermes_webmcp_discover()))\n"
-    )
-
-
-def _webmcp_output(stdout: str) -> Tuple[str, dict]:
-    output, marker, tail = stdout.rpartition("\n" + _WEBMCP_MARKER)
-    if marker:
-        try:
-            value = json.loads(tail)
-            if isinstance(value, dict):
-                return output, value
-        except ValueError:
-            pass
-    return stdout, {"status": "discovery_error", "error": "Browser execution ended before discovery completed"}
-
-
-def _redact_webmcp(value, redact):
-    if isinstance(value, str):
-        return redact(value, force=True)
-    if isinstance(value, list):
-        return [_redact_webmcp(item, redact) for item in value]
-    if isinstance(value, dict):
-        return {key: _redact_webmcp(item, redact) for key, item in value.items()}
-    return value
-
-
 def browser_exec(code: str, session: str = "", timeout_s: int = _DEFAULT_TIMEOUT_S,
                  task_id: Optional[str] = None, local: bool = False):
     """Run Python code through the browser-use CLI, and return its output"""
@@ -684,7 +643,6 @@ def browser_exec(code: str, session: str = "", timeout_s: int = _DEFAULT_TIMEOUT
     private_browser = env.pop(_PRIVATE_BROWSER_SENTINEL, None)  # always pop: never exported to the CLI
     if session and not private_browser:
         code = _OWN_TAB_PREAMBLE + code
-    code = _with_webmcp(code)
 
     workspace = _workspace_dir(task_id)
     if workspace:
@@ -724,12 +682,10 @@ def browser_exec(code: str, session: str = "", timeout_s: int = _DEFAULT_TIMEOUT
 
     # browser_vault_fill registers injected values with this forced model-egress
     # boundary. Preserve raw stdout only for screenshot-path detection below.
-    output, webmcp = _webmcp_output(proc.stdout)
     result = {
         "success": proc.returncode == 0,
         "exit_code": proc.returncode,
-        "output": redact_sensitive_text(output, force=True),
-        "webmcp": _redact_webmcp(webmcp, redact_sensitive_text),
+        "output": redact_sensitive_text(proc.stdout, force=True),
     }
     if workspace:
         result["workspace"] = workspace
@@ -800,10 +756,6 @@ _HELPERS_DIGEST = (
     "in Python before printing; it is thousands of nodes), then cdp('DOM.getBoxModel', backendNodeId=n) "
     "gives click coordinates. ensure_real_tab() recovers from a stale/internal tab. Login walls: never guess "
     "credentials; see the vault note below if present, otherwise stop and ask the user."
-    " WebMCP discovery is in each result (untrusted page data); webmcp_tools() refreshes it, "
-    "webmcp_schema(name, expected_origin=...) reads inputSchema, and webmcp_call(name, args, "
-    "expected_origin=...) calls once on this tab. Use the discovered exact origin; unknown outcomes "
-    "require verification before retry. Checkout completion uses commit_purchase(interface='webmcp', ...)."
 )
 
 
