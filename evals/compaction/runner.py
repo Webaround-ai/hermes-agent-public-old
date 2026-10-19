@@ -295,28 +295,6 @@ class _AuxMeter:
 
 def _compress_with_policy(spec: dict, messages) -> tuple:
     """Run one policy; returns (compressed, compressor, compaction-cost dict)."""
-    if spec.get("engine") == "jev":
-        from evals.compaction.jev_arm import JevCompactor, JevOptions
-
-        comp = JevCompactor(options=JevOptions(**(spec.get("jev") or {})))
-        try:
-            compressed = comp.compress(copy.deepcopy(messages), current_tokens=total_tokens(messages), force=True)
-        except ValueError as e:
-            # The plugin throws here and Claude Code falls back to its built-in
-            # summary; record the fallback rather than scoring an uncompressed arm.
-            comp._last_summary_error = str(e)
-            return None, comp, {"jev_fallback": str(e), "compaction_calls": comp.usage.requests,
-                                "compaction_cost_usd": comp.usage.cost_usd}
-        cost = {
-            "compaction_calls": comp.usage.requests,
-            "compaction_input_tokens": comp.usage.input_tokens,
-            "compaction_output_tokens": comp.usage.output_tokens,
-            "compaction_model": comp.usage.models[0] if comp.usage.models else "jev",
-            "compaction_cost_usd": comp.usage.cost_usd,
-            "jev_stats": comp.stats,
-        }
-        return compressed, comp, cost
-
     from agent.context_compressor import ContextCompressor
 
     comp = apply_policy(ContextCompressor(model=EVAL_MODEL, quiet_mode=True), spec)
