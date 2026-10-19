@@ -306,10 +306,13 @@ There is no standalone `api_server --help`: it is an adapter enabled through gat
 configuration. CI checks the gateway CLI help, the `gateway.run` module help and
 the actual HTTP server in a foreground gateway.
 
-The `iollo_notes` memory provider (brief 003) needs the **iollo-memory** extra
-(onnxruntime, sqlite-vec, tokenizers; onnxruntime has no macOS x86_64 wheel, so Intel
-runtimes search with FTS only) and its embedding model, all-MiniLM-L6-v2 int8 ONNX
-(about 23 MB). The model is never committed and never downloaded at runtime:
+The `iollo_notes` memory provider is recall-only (owner decision 2026-10-19): Hermes native memory
+(MEMORY.md / USER.md through the built-in `memory` tool) is the only memory, and the provider offers just the
+`recall` tool (Mac search over `/relay/device-tool`). It injects no prompt block, prefetches nothing and mirrors
+no writes, so nothing creates `$HERMES_HOME/memory-notes`. `notes.py`, `index.py`, `embedder.py` and `model.json`
+stay because the Mac bundle build still loads them; the provider module imports none of them. The
+**iollo-memory** extra (onnxruntime, sqlite-vec, tokenizers; onnxruntime has no macOS x86_64 wheel) and its
+embedding model, all-MiniLM-L6-v2 int8 ONNX (about 23 MB), are therefore still built. The model is never committed and never downloaded at runtime:
 `scripts/iollo/fetch-embedding-model.py` fetches `model.onnx` and `tokenizer.json` at
 release-build time and fails the build unless both match the size and SHA-256 pinned in
 `plugins/memory/iollo_notes/model.json`. It lands in
@@ -317,7 +320,7 @@ release-build time and fails the build unless both match the size and SHA-256 pi
 tarball (covered by `MANIFEST.json` and the archive hash; the smoke boot loads it) and at
 `/opt/hermes/plugins/memory/iollo_notes/model/` in the box image (the box job fetches it
 into the build context; the unchanged Dockerfile's `COPY . .` and `--extra all`, which now
-includes iollo-memory, do the rest). The provider loads it from there
+includes iollo-memory, do the rest). `embedder.py` loads it from there
 (`IOLLO_EMBED_MODEL_DIR` overrides); a missing or mismatched file means FTS-only search.
 
 Upstream's `setup.py` blocks normal wheel builds because wheels omit source-relative

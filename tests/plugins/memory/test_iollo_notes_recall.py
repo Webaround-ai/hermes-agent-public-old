@@ -11,8 +11,6 @@ import pytest
 
 from plugins.memory.iollo_notes import IolloNotesProvider, notes, where_it_is
 
-from .iollo_notes_fakes import write_fixture
-
 
 # -- note types, relation, provenance -------------------------------------------------------------
 
@@ -124,8 +122,7 @@ def stub(monkeypatch):
 
 @pytest.fixture
 def provider(tmp_path, stub):
-    write_fixture(tmp_path / "memory-notes")
-    p = IolloNotesProvider({"device": "box"}, embedder=None)
+    p = IolloNotesProvider()
     p.initialize("sess-fake", hermes_home=str(tmp_path), platform="cli")
     yield p
     p.shutdown()
@@ -141,7 +138,7 @@ MAC_LISTING = {"connected": True, "device": {"id": "dev_fake_mac", "name": "Fake
 
 def test_recall_is_a_tool_of_the_provider(provider):
     names = [schema["name"] for schema in provider.get_tool_schemas()]
-    assert "recall" in names and "memory_search" in names
+    assert names == ["recall"]
 
 
 def test_recall_asks_only_the_connected_mac(provider, stub):
@@ -164,6 +161,16 @@ def test_recall_asks_only_the_connected_mac(provider, stub):
                        "deadline_s": 20, "device_id": "dev_fake_mac"}
     assert call[3]["X-Relay-Token"] == "fake-relay-token"
     assert [r[1] for r in stub.requests] == ["/relay/device-tool", "/relay/device-tool"]   # no box catalogue search
+
+
+def test_zero_hit_recall_logs_a_miss_without_the_query(provider, stub, caplog):
+    stub.listing = MAC_LISTING
+    stub.mac_answer = {"state": "done", "output": "", "error": None, "data": {"hits": [], "indexed": 10, "total": 10}}
+    with caplog.at_level("INFO", logger="plugins.memory.iollo_notes"):
+        provider.handle_tool_call("recall", {"query": "secret porto lease"})
+    misses = [r.getMessage() for r in caplog.records if r.getMessage().startswith("recall miss")]
+    assert misses == ["recall miss: state=searched query_chars=18 sources=0"]
+    assert "secret" not in misses[0]
 
 
 def test_recall_says_nothing_found_only_after_the_mac_searched(provider, stub):
@@ -197,8 +204,7 @@ def test_recall_says_plainly_when_the_mac_cannot_be_searched(provider, stub, mon
 
 def test_recall_without_a_relay_token_says_the_mac_is_not_connected(tmp_path, monkeypatch):
     monkeypatch.delenv("RELAY_TOKEN", raising=False)
-    write_fixture(tmp_path / "memory-notes")
-    p = IolloNotesProvider({"device": "box"}, embedder=None)
+    p = IolloNotesProvider()
     p.initialize("sess-fake", hermes_home=str(tmp_path), platform="cli")
     out = json.loads(p.handle_tool_call("recall", {"query": "porto lease"}))
     assert out["mac"] == "not_connected" and "hits" not in out and "error" in out

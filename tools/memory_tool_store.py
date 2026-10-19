@@ -285,6 +285,8 @@ class MemoryStore:
             if content in entries:
                 return self._success_response(target, "Entry already exists (no duplicate added).")
             if len(ENTRY_DELIMITER.join(entries + [content])) > limit:
+                logger.info("memory full: target=%s chars=%d limit=%d", target,
+                            len(ENTRY_DELIMITER.join(entries + [content])), limit)
                 return self._failure_with_entries(target, (
                     f"Memory at {self._char_count(target):,}/{limit:,} chars. Adding this entry "
                     f"({len(content)} chars) would exceed the limit. Consolidate now: use 'replace' to merge "
@@ -353,6 +355,7 @@ class MemoryStore:
                 return replaced, "Entry removed.", {"removed_entry": entries[idx]}
             new_total = len(ENTRY_DELIMITER.join(replaced))
             if new_total > limit:
+                logger.info("memory full: target=%s chars=%d limit=%d", target, new_total, limit)
                 return self._failure_with_entries(target, (
                     f"Replacement would put memory at {new_total:,}/{limit:,} chars. Shorten the new content, "
                     f"or 'remove' other stale or less important entries to make room (see current_entries "
@@ -442,6 +445,7 @@ class MemoryStore:
                     f"final entry deliberately, use single remove() calls."))
             new_total = len(ENTRY_DELIMITER.join(working))  # budget check against the FINAL state only
             if new_total > limit:
+                logger.info("memory full: target=%s chars=%d limit=%d", target, new_total, limit)
                 return self._batch_failure(target, (
                     f"After applying all {len(operations)} operations, memory would be at "
                     f"{new_total:,}/{limit:,} chars -- over the limit. Remove or shorten more "
