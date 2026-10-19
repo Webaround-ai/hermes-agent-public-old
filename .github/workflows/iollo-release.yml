@@ -35,9 +35,6 @@ jobs:
         run: |
           python3 scripts/iollo/release.py check-tag "$TAG"
           echo "sha=$(git rev-parse --short=12 HEAD)" >> "$GITHUB_OUTPUT"
-      - name: Put the pinned embedding model into the build context
-        # COPY . . lands it at /opt/hermes/plugins/memory/iollo_notes/model/ in the image.
-        run: python3 scripts/iollo/fetch-embedding-model.py plugins/memory/iollo_notes/model
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
       - uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
         with:

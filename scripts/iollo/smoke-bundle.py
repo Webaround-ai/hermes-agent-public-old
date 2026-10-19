@@ -54,17 +54,6 @@ def smoke(root):
              "from pathlib import Path; import sys; "
              "assert Path(run_agent.__file__).resolve().is_relative_to(Path(sys.prefix).parent); "
              "print('Bundled imports OK:', sys.executable)"])
-        # The pinned embedding model is inside the runtime and loads from there (onnxruntime has no
-        # macOS x86_64 wheel, so Intel runtimes check the files and fall back to FTS-only search).
-        run([python, "-I", "-B", "-c", "import platform, sqlite3, sys; from pathlib import Path; "
-             "from plugins.memory.iollo_notes import embedder as m; "
-             "d = m.model_dir(); problems = m.verify_model_dir(d); assert not problems, problems; "
-             "assert d.resolve().is_relative_to(Path(sys.prefix).parent), d; "
-             "import sqlite_vec, tokenizers; "
-             "e = m.load_embedder() if platform.machine() == 'arm64' else None; "
-             "assert platform.machine() != 'arm64' or (e is not None and len(e.embed(['my dentist'])[0]) == 384); "
-             "c = sqlite3.connect(':memory:'); vec = hasattr(c, 'enable_load_extension'); "
-             "print('Embedding model OK:', d, '(sqlite-vec loadable)' if vec else '(brute-force cosine)')"])
         run([launcher, "--version"])
         run([launcher, "gateway", "--help"])
         run([launcher, "gateway", "run", "--help"])

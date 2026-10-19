@@ -34,22 +34,19 @@ unset PYTHONHOME PYTHONPATH
 # Include only tracked checkout files, never local credentials, caches or build output.
 # Retain the entire source layout: upstream resolves lazy imports and data via __file__.
 git -C "$repo" ls-files -z | COPYFILE_DISABLE=1 tar -C "$repo" --null -T - -cf - | tar -C "$root/hermes" -xf -
-# The iollo_notes embedding model ships inside the runtime, checked against the SHA-256 pinned in
-# plugins/memory/iollo_notes/model.json; the app and the runtime never download it.
-python3 "$script_dir/fetch-embedding-model.py" "$root/hermes/plugins/memory/iollo_notes/model"
 # Export upstream's locked dependency closure, including hashes. The exporter is
 # a build tool in a temporary venv, not an extra dependency of the runtime.
 "$python" -m venv "$work/build-tools"
 "$work/build-tools/bin/python3" -m pip install --disable-pip-version-check 'uv==0.11.6'
 "$work/build-tools/bin/uv" export --project "$root/hermes" --frozen --no-dev \
-  --extra messaging --extra mcp --extra web --extra iollo-memory --no-emit-project \
+  --extra messaging --extra mcp --extra web --no-emit-project \
   --format requirements-txt --output-file "$root/requirements.lock.txt" >/dev/null
 "$python" -m pip install --disable-pip-version-check --no-compile --require-hashes \
   --report "$root/DEPENDENCIES-REPORT.json" -r "$root/requirements.lock.txt"
 # Upstream's sealed-package build switch; only enabled for this pip invocation.
 # No Hermes source edits and no Nix/managed-mode flag in the runtime environment.
 HERMES_NIX_BUILD=1 "$python" -m pip install --disable-pip-version-check \
-  --no-compile --no-deps --report "$root/INSTALL-REPORT.json" "$root/hermes[messaging,mcp,web,iollo-memory]"
+  --no-compile --no-deps --report "$root/INSTALL-REPORT.json" "$root/hermes[messaging,mcp,web]"
 "$python" -m pip check
 "$python" "$script_dir/bundle.py" prepare "$root"
 "$python" -I -B - <<'PY'
