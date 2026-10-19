@@ -409,7 +409,7 @@ def test_project_tools_returns_the_same_list_when_nothing_is_removed():
 
 
 def test_explicit_profile_materializes_scoped_deferred_tool_and_dispatches_directly(monkeypatch):
-    """A Jev-style profile can name a deferred plugin without adding discovery bridges."""
+    """A lookup profile can name a deferred plugin without adding discovery bridges."""
     import model_tools
     from tools.tool_search import BRIDGE_TOOL_NAMES, ToolSearchConfig, assemble_tool_defs
 
@@ -444,7 +444,7 @@ def test_explicit_profile_materializes_scoped_deferred_tool_and_dispatches_direc
             enabled_toolsets=[toolset], disabled_toolsets=None,
         )
         stored_pin = list(agent.tools)
-        set_tool_profile(agent, ToolProfile("jev-lookup", frozenset({name})))
+        set_tool_profile(agent, ToolProfile("lookup", frozenset({name})))
         projected = project_tools(agent, agent.tools)
         assert [item["function"]["name"] for item in projected] == [name]
         assert agent.tools == stored_pin

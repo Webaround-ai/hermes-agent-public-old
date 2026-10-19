@@ -69,50 +69,12 @@ kwargs plus optional attribute overrides applied post-construction (e.g.
 `tail_token_budget`). Add new policies there — the runner picks them up by
 name.
 
-A policy with `"engine": "jev"` bypasses `ContextCompressor` and runs
-`jev_arm.py`, a Python port of
-[fast-jev-compaction](https://github.com/tamaratran/fast-jev-compaction): no
-summary at all — TypeSafe's Jev decision model scores every tool call/result
-(`noul` keep probabilities over the whole history) and stale ones are dropped
-or truncated while user/assistant text stays verbatim. Transport is
-OpenRouter's Decisions API (`~typesafe/jev-latest`, needs
-`OPENROUTER_API_KEY`); `"jev": {...}` overrides `JevOptions` (threshold,
-pinned tail, state/request ceilings). When the fitted state cannot get under
-the 25K-token ceiling the arm records `jev_fallback` (the plugin throws and
-Claude Code falls back to its built-in summary) instead of scoring.
-
 Every arm's result carries its compaction spend: `compaction_calls`,
 `compaction_input_tokens` / `compaction_output_tokens`, `compaction_model`
-and `compaction_cost_usd` (Jev reports cost directly; summary calls are
+and `compaction_cost_usd` (summary calls are
 priced at the OpenRouter list price of the model that answered). The run
 also writes `eval_usage.json` — the harness's own question/answer/judge
 token bill.
-
-## Repeated-compaction simulation (`scripts/jev_cycles.py`)
-
-A one-shot recall score misses the failure mode of "decide, don't summarise"
-compaction: it never removes user/assistant text, so each cycle frees only
-`threshold − text_floor` and the floor grows monotonically. `jev_cycles.py`
-feeds a lineage chronologically and compacts with the Jev arm every time the
-estimate crosses the threshold, recording per cycle: tokens before/after,
-percent freed, text floor, candidate/dropped calls, fitting stage, state
-tokens, requests and Jev cost. It stops at end of transcript, when a cycle
-frees nothing (`stuck`), or when the state cannot fit Jev's 25K ceiling
-(`fallback` — the plugin throws there).
-
-```bash
-# lineage from a state.db COPY (see above), then, with OPENROUTER_API_KEY set:
-python evals/compaction/scripts/jev_cycles.py /path/lineage.json 500000 40 > cycles-500k.json
-python evals/compaction/scripts/jev_cycles.py /path/lineage.json 160000 60 > cycles-160k.json
-python evals/compaction/scripts/jev_cycles_report.py cycles-*.json      # markdown table
-```
-
-Threshold 500000 ≈ Hermes' 1M-window posture; 160000 ≈ a 200K-window host.
-Each cycle costs 1–8 Jev requests (< 1¢); a 40-cycle run is ~$0.20. The
-2026-09-19 runs are committed under `results/jev-cycles-2026-09-19/` (counts
-only, no transcript content) and summarised in `SCORECARD-2026-09-19-jev.md`:
-freed-per-cycle decayed 63% → 8% / 76% → 20% / 89% → 55% over 32–40 cycles,
-one 200K run was stuck after 0.42M tokens of work, one transcript never fit.
 
 ## Notes
 
