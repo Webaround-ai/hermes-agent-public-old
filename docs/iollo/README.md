@@ -14,7 +14,7 @@ For native TypeSafe transport and shim retirement, read cloud
 [JEV](https://github.com/Webaround-ai/iollo/blob/main/docs/JEV.md).
 
 Iollo runs the personal agent on one Linux machine/volume per owner. Web is a device client; Mac is
-menu bar/local tools. iOS and Desktop Pro are parked. Upstream room, desktop, messaging or local-agent
+menu bar/local tools. iOS and Desktop Pro are archived (2026-10-19). Upstream room, desktop, messaging or local-agent
 features are not evidence that Iollo exposes them. Sessions/delegates share owner filesystem, memory,
 browser and services; distinct session IDs do not isolate resources for multiple people.
 
@@ -100,9 +100,9 @@ history. The existing scheduler and conversation loop execute the revised direct
 ledger retains the session binding and the existing job retains idempotent continuation admission.
 Cloud task publication must distinguish execution identity from shared native session identity.
 
-The retired Iollo permissions plugin and memory-decision client are removed. Native approvals,
-local notes/index and connected Mac recall remain. `memory_note` gains scoped correction/removal
-with expected-content validation and generated-profile invalidation. Retained transcript and
-skill deletion are separate operations; note removal is not a guarantee against later relearning.
+The retired Iollo permissions plugin and memory-decision client are removed. Native approvals and
+connected Mac recall remain. Since 2026-10-19 (PR #43) memory is Hermes native memory only: `iollo_notes`
+offers just the `recall` tool, and the local notes, `memory_note` and prefetch are gone (cloud
+`docs/NATIVE-MEMORY.md`). Retained transcript and skill deletion are separate operations.
 Browser/MCP integrations continue to use native tools; Iollo's structured payment adapter lives
 in the existing cloud transaction gate. Check cloud STATE for installed image evidence.
