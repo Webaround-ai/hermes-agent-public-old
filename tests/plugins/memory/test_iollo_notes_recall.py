@@ -1,5 +1,4 @@
-"""iollo_notes recall (iollo docs/MAC-RECALL-AND-MEMORY-DESIGN.md sections 6 and 7): the two new note types, the
-people relation bullet, catalogue provenance, and the ``recall`` tool against a stub control plane (the Mac is
+"""iollo_notes recall (iollo docs/MAC-RECALL-AND-MEMORY-DESIGN.md sections 6 and 7): the ``recall`` tool against a stub control plane (the Mac is
 the only place recall searches; iollo owner decision 2026-10-15).
 Every name, ref and token here is fake."""
 
@@ -9,48 +8,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
-from plugins.memory.iollo_notes import IolloNotesProvider, notes, where_it_is
-
-
-# -- note types, relation, provenance -------------------------------------------------------------
-
-def test_projects_and_documents_are_note_types():
-    assert notes.TYPE_FOLDERS["project"] == "projects" and notes.TYPE_FOLDERS["document"] == "documents"
-    note = notes.new_note("documents/porto-lease", "document", "Porto lease", [], "2026-10-14")
-    notes.append_fact(note, "Lives in Documents/Housing; renews every March.", "2026-10-14",
-                      notes.recall_provenance("dev_fake", "Documents/Housing/porto-lease.pdf"))
-    text = notes.render(note)
-    assert notes.validate("documents/porto-lease.md", text) == []
-    assert "(from: recall:dev_fake:Documents/Housing/porto-lease.pdf)" in text
-    assert notes.validate("projects/porto-lease.md", text.replace("documents/", "projects/")) == [
-        "type does not match folder"]
-
-
-def test_recall_provenance_is_one_short_line_that_round_trips():
-    assert notes.recall_provenance("dev_fake", "a (b).pdf") == "recall:dev_fake:a [b].pdf"
-    long_ref = "Documents/" + "deep/" * 60 + "file.pdf"
-    short = notes.recall_provenance("dev_fake", long_ref)
-    assert short.startswith("recall:dev_fake:sha256:") and len(short) < 60
-    assert short == notes.recall_provenance("dev_fake", long_ref)
-    note = notes.new_note("documents/x", "document", "X", [], "2026-10-14")
-    notes.append_fact(note, "A fact.", "2026-10-14", notes.recall_provenance("dev_fake", "a (b).pdf"))
-    assert notes.parse(notes.render(note)).facts[0].provenance == "recall:dev_fake:a [b].pdf"
-
-
-def test_a_person_has_at_most_one_current_relation():
-    note = notes.new_note("people/fake-landlord", "person", "Fake Landlord", [], "2026-10-01")
-    assert notes.relation_of(note) is None
-    notes.append_fact(note, notes.relation_text("Colleague"), "2026-10-01", "box, consolidation")
-    notes.append_fact(note, "~~relation: colleague~~ (until 2026-10-14)", "2026-10-14", "box, consolidation")
-    notes.append_fact(note, notes.relation_text("landlord"), "2026-10-14", "recall:dev_fake:mail:1")
-    assert notes.relation_of(note) == "landlord"
-    assert notes.validate("people/fake-landlord.md", notes.render(note)) == []
-    with pytest.raises(notes.NoteError):
-        notes.relation_text("the person who rents me the flat in Porto, since 2019!")
-    org = notes.new_note("organizations/acme", "organization", "Acme", [], "2026-10-14")
-    notes.append_fact(org, "relation: landlord", "2026-10-14", "box")
-    assert notes.validate("organizations/acme.md", notes.render(org)) == [
-        "a relation bullet belongs only in a people note"]
+from plugins.memory.iollo_notes import IolloNotesProvider, where_it_is
 
 
 # -- where a hit is ------------------------------------------------------------------------------

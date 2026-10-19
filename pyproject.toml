@@ -257,15 +257,6 @@ wake = [
   "ai-edge-litert==2.1.6; platform_system == 'Darwin'",
 ]
 honcho = ["honcho-ai==2.2.0"]
-# Iollo fork (brief 003): the iollo_notes memory provider's local index. onnxruntime runs the
-# pinned all-MiniLM-L6-v2 int8 embedding model (shipped in the release, see
-# plugins/memory/iollo_notes/model.json); sqlite-vec is the vector table; tokenizers reads the
-# model's tokenizer.json. onnxruntime has no macOS x86_64 wheel, so Intel Macs get FTS-only search.
-iollo-memory = [
-  "onnxruntime==1.27.0; sys_platform != 'darwin' or platform_machine != 'x86_64'",
-  "sqlite-vec==0.1.9",
-  "tokenizers==0.22.2",
-]
 # Cloud memory providers — opt-in, lazy-installed via tools/lazy_deps.py
 # (memory.supermemory / memory.mem0) at first use. Where BOTH pin exactly the
 # versions MUST match (enforced by tests/test_project_metadata.py); LAZY_DEPS
@@ -428,9 +419,6 @@ all = [
   "hermes-agent[google]",
   "hermes-agent[web]",
   "hermes-agent[youtube]",
-  # Iollo fork: baked into the box image (built from this unchanged Dockerfile's `--extra all`)
-  # so the iollo_notes provider never lazy-installs; see docs/IOLLO-FORK.md.
-  "hermes-agent[iollo-memory]",
 ]
 
 [build-system]
@@ -633,7 +621,7 @@ gateway = ["assets/**/*"]
 # Bundled plugin discovery reads these manifests at runtime. Keep them in
 # sealed wheels with the plugin Python modules; without this declaration the
 # wheel contains adapters but discovery finds zero bundled plugins.
-plugins = ["**/plugin.yaml", "**/plugin.yml", "memory/iollo_notes/model.json"]
+plugins = ["**/plugin.yaml", "**/plugin.yml"]
 # Bot Desktop starts Xvnc + Xfce through a shell launcher and seeds the wallpaper; both are read
 # via Path(__file__).parent in tools/bot_desktop/runtime.py and vanish from sealed wheels otherwise.
 tools = ["bot_desktop/launcher.sh", "bot_desktop/wallpaper.png"]

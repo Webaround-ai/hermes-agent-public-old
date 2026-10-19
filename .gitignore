@@ -304,5 +304,3 @@ native/fts5_cjk/*.so
 
 # Disposable profile created by scripts/probe_active_session_exclusivity.py
 .probe-home/
-# Iollo: the embedding model is fetched (pinned) at release-build time, never committed.
-plugins/memory/iollo_notes/model/
