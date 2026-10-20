@@ -95,6 +95,8 @@ def test_run_conversation_acquires_then_reloads_latest_tip(monkeypatch):
         return True
 
     db.acquire_session_turn_lease = acquire_with_wait
+    waits = []
+    agent.session_wait_callback = waits.append      # Iollo fork: the api_server run's ``run.waiting``
 
     monkeypatch.setattr("agent.conversation_loop.run_conversation", fake_run)
     monkeypatch.setattr("agent.relay_cwd.resolve_relay_scope_cwds", resolve_relay_cwds)
@@ -121,6 +123,7 @@ def test_run_conversation_acquires_then_reloads_latest_tip(monkeypatch):
         "include_row_ids": True,
     }
     assert any(kind == "lifecycle" and text for kind, text in status_events)
+    assert waits == [0.0]
 
 
 def test_run_conversation_acquires_lease_when_session_probe_raises(monkeypatch):
