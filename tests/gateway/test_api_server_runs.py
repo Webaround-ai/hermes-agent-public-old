@@ -378,6 +378,30 @@ class TestStartRun:
             assert agent.skip_background_review is expected
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("value, status, expected", [(8, 202, 8), (None, 202, None), (0, 400, None),
+                                                         (True, 400, None), ("8", 400, None)])
+    async def test_max_iterations_is_a_per_run_cap(self, adapter, value, status, expected):
+        """Iollo fork: a chat run asks for a short loop; the cap reaches ``_create_agent``."""
+        app = _create_runs_app(adapter)
+        agent = self._capturing_agent({})
+        seen = {}
+
+        def _create(**kwargs):
+            seen.update(kwargs)
+            return agent
+        body = {"input": "hello", **({"max_iterations": value} if value is not None else {})}
+        async with TestClient(TestServer(app)) as cli:
+            with patch.object(adapter, "_create_agent", side_effect=_create):
+                resp = await cli.post("/v1/runs", json=body)
+                assert resp.status == status
+                if status == 202:
+                    await self._wait_completed(cli, (await resp.json())["run_id"])
+                else:
+                    assert (await resp.json())["error"]["code"] == "invalid_max_iterations"
+        if status == 202:
+            assert seen["max_iterations_cap"] == expected
+
+    @pytest.mark.asyncio
     async def test_glob_and_read_tools_reach_the_run_agent_and_the_report(self, adapter):
         """Iollo fork: connector globs and ``read_tools`` are kept on the profile; the report carries the read
         outcome (none here: the fake agent never sends a request)."""

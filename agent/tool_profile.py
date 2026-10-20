@@ -535,6 +535,16 @@ def normalize_skip_background_review(value: Any) -> bool:
     return value
 
 
+def normalize_max_iterations(value: Any) -> Optional[int]:
+    """Request ``max_iterations`` -> a per-run round cap (absent: None, the configured budget). It only lowers the
+    configured ``max_turns``: a chat surface asks for a short loop, its budget hit forces the usual final answer."""
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise ValueError("'max_iterations' must be a positive integer")
+    return value
+
+
 def tool_profile_report(agent: Any, api_calls: Any = None) -> Optional[dict]:
     """``{"name", "lifted", "api_calls"}`` for a run that asked for a profile, else ``None`` (wire shape
     unchanged). ``api_calls`` lets a caller compare input tokens per model call across profiles."""
