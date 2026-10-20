@@ -465,7 +465,19 @@ def _provider_preferences_for_agent(agent) -> Dict[str, Any]:
 
 def _prompt_cache_scope_for_agent(agent) -> "str | None":
     """Rotation-stable logical cache scope for *agent*, or None (transports then
-    fall back to the physical session_id, so a failure never blocks the build)."""
+    fall back to the physical session_id, so a failure never blocks the build).
+
+    Iollo fork: ``prompt_caching.key_scope: profile`` gives every conversation of the profile one
+    scope, so a new conversation reuses the cached system prompt and tools (the key stays
+    content-addressed: a changed prompt or tool array still gets its own bucket). A one-owner box
+    is far below a key's request-rate limit; the default keeps the per-conversation scope."""
+    try:
+        from hermes_cli.config import load_config_readonly
+        caching = (load_config_readonly() or {}).get("prompt_caching")
+        if isinstance(caching, dict) and str(caching.get("key_scope") or "").strip().lower() == "profile":
+            return "profile"
+    except Exception:
+        logger.debug("prompt_caching.key_scope read failed", exc_info=True)
     try:
         from agent.prompt_cache_scope import resolve_prompt_cache_scope_safe
         return resolve_prompt_cache_scope_safe(agent)
