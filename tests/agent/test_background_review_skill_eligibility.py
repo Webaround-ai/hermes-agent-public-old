@@ -15,7 +15,7 @@ def _result(name, content='{}'):
 
 @pytest.mark.parametrize("tool", ["terminal", "browser_click", "search_answer", "execute_code"])
 def test_short_actual_tool_work_reviews_but_history_and_chatter_do_not(tool):
-    agent = SimpleNamespace(_skill_nudge_interval=10, _iters_since_skill=1, valid_tool_names={"skill_manage"})
+    agent = SimpleNamespace(_skill_nudge_interval=10, _iters_since_skill=10, valid_tool_names={"skill_manage"})
     current = [{"role": "user", "content": "Do the task"}] + _result(tool)
     assert should_review_skills(agent, current)
     assert agent._iters_since_skill == 0
@@ -37,7 +37,7 @@ def test_only_successful_foreground_skill_write_suppresses_review(success):
     "_empty_recovery_synthetic", "_dropped_toolcall_nudge", "_todo_snapshot_synthetic",
 ])
 def test_runtime_nudge_keeps_short_tool_evidence_until_genuine_new_user_turn(flag):
-    agent = SimpleNamespace(_skill_nudge_interval=10, _iters_since_skill=1, valid_tool_names={"skill_manage"})
+    agent = SimpleNamespace(_skill_nudge_interval=10, _iters_since_skill=10, valid_tool_names={"skill_manage"})
     messages = [{"role": "user", "content": "Complete this task"}] + _result("terminal") + [
         {"role": "user", "content": "Verify before finishing", flag: True},
         {"role": "assistant", "content": "Verified; done"},
@@ -45,3 +45,13 @@ def test_runtime_nudge_keeps_short_tool_evidence_until_genuine_new_user_turn(fla
     assert should_review_skills(agent, messages)
     messages.append({"role": "user", "content": "What is the weather?"})
     assert not should_review_skills(agent, messages)
+
+
+def test_tool_backed_turn_waits_for_nudge_interval():
+    """Regression (2026-10-20): every tool-backed owner turn spawned a review; cadence is the interval."""
+    agent = SimpleNamespace(_skill_nudge_interval=10, _iters_since_skill=9, valid_tool_names={"skill_manage"})
+    current = [{"role": "user", "content": "Do the task"}] + _result("terminal")
+    assert not should_review_skills(agent, current)
+    assert agent._iters_since_skill == 9
+    agent._iters_since_skill = 10
+    assert should_review_skills(agent, current)

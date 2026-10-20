@@ -23,13 +23,17 @@ logger = logging.getLogger(__name__)
 
 
 def should_review_skills(agent: Any, messages: List[Dict[str, Any]]) -> bool:
-    """Cover short tool-backed turns on the existing review rail, without reviewing chatter.
+    """Every ``creation_nudge_interval`` tool iterations, review a tool-backed turn (never chatter).
 
     Only paired tool results since the latest owner message count. A successful skill write
     already covers foreground learning; failed writes must not suppress the review. Runtime
     verification/recovery scaffolding in user-role rows does not start a new owner turn.
     """
-    if getattr(agent, "_skill_nudge_interval", 0) <= 0 or "skill_manage" not in agent.valid_tool_names:
+    interval = getattr(agent, "_skill_nudge_interval", 0)
+    if interval <= 0 or "skill_manage" not in agent.valid_tool_names:
+        return False
+    # Upstream cadence: only once ``interval`` tool iterations accumulated since the last skill write.
+    if getattr(agent, "_iters_since_skill", 0) < interval:
         return False
     from agent.session_persistence import _is_ephemeral_scaffolding
     start = next((i + 1 for i in range(len(messages) - 1, -1, -1)
@@ -61,6 +65,11 @@ def should_review_skills(agent: Any, messages: List[Dict[str, Any]]) -> bool:
 
 
 _BACKGROUND_REVIEW_CANCEL_TIMEOUT_SECONDS = 2.0
+# session_id -> in-flight run. Hosts that build a fresh AIAgent per request (gateway api_server)
+# leave the previous turn's run on an agent the next turn never sees; the next live turn on the
+# same session finds it here so the owner turn still wins.
+_SESSION_REVIEW_RUNS: Dict[str, "_BackgroundReviewRun"] = {}
+_SESSION_REVIEW_RUNS_LOCK = threading.Lock()
 
 
 class _BackgroundReviewRun:
@@ -72,6 +81,7 @@ class _BackgroundReviewRun:
         self._lock = threading.Lock()
         self._review_agent = None
         self._request_finished = self._cancel_dispatched = False
+        self.session_id = ""
 
     def begin_request(self, review_agent: Any) -> bool:
         """Atomically admit the first provider-capable review phase."""
@@ -124,6 +134,10 @@ def prepare_background_review_run(agent: Any) -> Optional[_BackgroundReviewRun]:
             agent._background_review_run = run
     except (AttributeError, TypeError):
         return None
+    if session_id := getattr(agent, "session_id", None):
+        run.session_id = str(session_id)
+        with _SESSION_REVIEW_RUNS_LOCK:
+            _SESSION_REVIEW_RUNS[run.session_id] = run
     return run
 
 
@@ -131,6 +145,9 @@ def finish_background_review_run(agent: Any, run: Optional[_BackgroundReviewRun]
     """Publish one run's request exit without clearing a successor (ABA-safe)."""
     if run is None or not run.mark_request_finished():
         return
+    with _SESSION_REVIEW_RUNS_LOCK:
+        if _SESSION_REVIEW_RUNS.get(run.session_id) is run:
+            del _SESSION_REVIEW_RUNS[run.session_id]
     with _optional_lock(agent, "_background_review_lock"):
         if getattr(agent, "_background_review_run", None) is run:
             agent._background_review_run = None
@@ -167,6 +184,11 @@ def cancel_background_review_for_live_turn(agent: Any) -> None:
     with _optional_lock(agent, "_background_review_lock"):
         run = getattr(agent, "_background_review_run", None)
         legacy_agent = getattr(agent, "_background_review_agent", None)
+    # Another agent's review on this session (fresh agent per request). Forks share the session_id
+    # and are persistence-detached; they must not cancel the review that is running them.
+    if run is None and legacy_agent is None and not getattr(agent, "_persist_disabled", False):
+        with _SESSION_REVIEW_RUNS_LOCK:
+            run = _SESSION_REVIEW_RUNS.get(str(getattr(agent, "session_id", None) or ""))
     review_agent = legacy_agent if run is None else run.cancel()
     # Attribute the review fork's usage to the PARENT session. Snapshot BEFORE unregister/close so counters
     # survive teardown. Placed in this finally so a fork that consumed tokens and THEN raised is still

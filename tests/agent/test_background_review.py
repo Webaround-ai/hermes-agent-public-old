@@ -996,3 +996,37 @@ def test_turn_exit_log_carries_fork_origin_tag():
     assert len(records) == 2
     assert "origin=" not in records[0], records[0]
     assert "origin=background_review" in records[1], records[1]
+
+
+def test_live_turn_on_fresh_agent_cancels_previous_agents_review_on_same_session():
+    """Regression (2026-10-20): api_server builds a fresh AIAgent per run, so the next owner
+    turn never saw the previous agent's review. The live turn must still win on its session."""
+    from agent.background_review import (
+        cancel_background_review_for_live_turn, finish_background_review_run,
+        prepare_background_review_run,
+    )
+
+    interrupted = threading.Event()
+
+    class Fork:
+        def interrupt(self, message=None):
+            interrupted.set()
+
+    previous, live, other_session, fork = _bare_agent(), _bare_agent(), _bare_agent(), Fork()
+    other_session.session_id = "other-session"
+    fork_agent = _bare_agent()
+    fork_agent._persist_disabled = True  # the fork's own run_conversation shares the session_id
+    run = prepare_background_review_run(previous)
+    assert run.begin_request(fork)
+
+    cancel_background_review_for_live_turn(other_session)
+    cancel_background_review_for_live_turn(fork_agent)
+    assert not run.cancel_requested.is_set()
+
+    finisher = threading.Timer(0.1, finish_background_review_run, args=(previous, run))
+    finisher.start()
+    cancel_background_review_for_live_turn(live)
+    assert run.cancel_requested.is_set()
+    assert interrupted.wait(2.0)
+    assert run.request_done.wait(2.0)
+    cancel_background_review_for_live_turn(live)  # finished runs leave no session entry behind

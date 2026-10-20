@@ -82,11 +82,15 @@ every review. Generic Hermes help remains subordinate to host product policy. Wo
 methods require observed evidence and private session/tool references; confirmed, owner-assisted,
 and unknown outcomes stay distinct. Unknown outcomes may retain a bounded pitfall.
 
-The existing after-delivery review fork also covers short turns with actual tool results,
-excluding skill/memory bookkeeping and successful foreground skill writes. No-tool chatter
-is skipped. Positive `creation_nudge_interval` enables this eligibility; zero disables it.
-This adds review calls for short tool-backed tasks; existing budgets, live-turn cancellation,
-and `skip_background_review` apply. Both native and Codex app-server finalizers share the
+The existing after-delivery review fork runs at upstream cadence: once
+`skills.creation_nudge_interval` (default 10) tool iterations have accumulated since the last
+skill write, on a turn with actual tool results, excluding skill/memory bookkeeping and
+successful foreground skill writes. No-tool chatter is skipped; zero disables it. (2026-10-20:
+the 10-18 version reviewed every tool-backed turn, which ran a review after nearly every owner
+turn.) The counter is rebuilt from history at turn start, so a fresh agent per api_server run
+keeps the cadence. A new live turn cancels a review still running on the same session, also
+when the previous turn ran on a different agent instance. Existing budgets and
+`skip_background_review` apply. Both native and Codex app-server finalizers share the
 predicate. New `skill_manage(create)` creations are agent-authored in foreground and background;
 existing unknown or owner provenance is never automatically adopted. Pinned, shipped,
 installed and externally owned skills keep their protection. This is source evidence only;

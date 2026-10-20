@@ -138,10 +138,10 @@ def test_persistence_failure_error_fallback_is_pinned_and_leaves_final_response_
     agent._spawn_background_review.assert_not_called()
 
 
-def test_short_tool_turn_reviews_skills_after_delivery_without_memory_trigger():
+def test_tool_turn_at_skill_interval_reviews_skills_after_delivery_without_memory_trigger():
     agent = _make_agent()
     _stub_agent_for_finalize(agent)
-    agent._iters_since_skill = 1
+    agent._iters_since_skill = agent._skill_nudge_interval
     _run_finalize(agent, review_memory=False, messages=[
         {"role": "user", "content": "Inspect it"},
         {"role": "assistant", "tool_calls": [{"id": "observed", "function": {"name": "terminal"}}]},
