@@ -157,6 +157,7 @@ def run_tool_round(
         with suppress(Exception):
             agent.stream_delta_callback(None)
 
+    _lift_round_cap_for_browser_work(agent, assistant_message.tool_calls)
     agent._execute_tool_calls(assistant_message, messages, effective_task_id, api_call_count)
 
     if getattr(agent, "_incremental_persistence_failed", False):
@@ -258,6 +259,32 @@ def run_tool_round(
     # the gateway kills the session before the next activity touch fires (#69559, #69131).
     agent._touch_activity(f"tool results posted, continuing iteration #{api_call_count}")
     return _verdict("continue")
+
+
+def _called_name(tool_call: Any) -> str:
+    """The tool a call runs: the underlying name for a ``tool_call`` bridge call."""
+    fn = getattr(tool_call, "function", None)
+    name = str(getattr(fn, "name", "") or "")
+    if name != "tool_call":
+        return name
+    try:
+        from tools.tool_search import resolve_underlying_call
+        args = json.loads(getattr(fn, "arguments", None) or "{}")
+        underlying, _args, _err = resolve_underlying_call(args if isinstance(args, dict) else {})
+    except Exception:
+        return name
+    return str(underlying or name)
+
+
+def _lift_round_cap_for_browser_work(agent: Any, tool_calls: Any) -> None:
+    """A run's lowered round cap (api_server ``max_iterations``) returns to the configured budget once the run
+    starts browser work: a short chat loop must not cut a checkout or booking off half way."""
+    lift_to = getattr(agent, "_round_cap_lift_to", None)
+    if not lift_to or not any(_called_name(tc).startswith("browser_") for tc in tool_calls or ()):
+        return
+    agent._round_cap_lift_to = None
+    agent.max_iterations = lift_to
+    agent.iteration_budget.max_total = max(agent.iteration_budget.max_total, lift_to)
 
 
 def tool_ended_turn_text(agent: Any, assistant_message: Any, messages: Any) -> Optional[str]:
