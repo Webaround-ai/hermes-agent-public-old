@@ -26,7 +26,7 @@ except ImportError:
 
 from agent.prompt_version import normalize_prompt_version, set_prompt_version
 from agent.tool_profile import (
-    normalize_ends_turn, normalize_skip_background_review, normalize_tool_profile, set_ends_turn, set_tool_profile,
+    normalize_ends_turn, normalize_max_iterations, normalize_skip_background_review, normalize_tool_profile, set_ends_turn, set_tool_profile,
     tool_profile_report)
 from gateway.platforms.api_server_room_grants import _json_error, _room_grant_error_response
 from gateway.platforms.api_server_run_progress import RunProgress, pulse as _run_pulse
@@ -748,6 +748,10 @@ async def _handle_runs(self, request: "web.Request", *, _api_server) -> "web.Res
         skip_background_review = normalize_skip_background_review(body.get("skip_background_review"))
     except ValueError as exc:
         return _json_error(_openai_error, str(exc), code="invalid_skip_background_review", status=400)
+    try:
+        max_iterations_cap = normalize_max_iterations(body.get("max_iterations"))
+    except ValueError as exc:
+        return _json_error(_openai_error, str(exc), code="invalid_max_iterations", status=400)
     conversation_history, instructions, stored_session_id, history_err = (
         _resolve_conversation_history(self, body, raw_input, _openai_error=_openai_error))
     if history_err is not None:
@@ -822,6 +826,7 @@ async def _handle_runs(self, request: "web.Request", *, _api_server) -> "web.Res
         agent_kwargs=dict(
             ephemeral_system_prompt=instructions, session_id=session_id, gateway_session_key=gateway_session_key,
             route=route, room_dispatch=room_dispatch, room_execution_policy=room_execution_policy,
+            max_iterations_cap=max_iterations_cap,
             **{k: agent_overrides.get(k) for k in ("requested_model", "requested_provider", "model_options")}),
         request_profile=_api_server._api_request_profile.get(),
         browser_control_principal=_api_server._api_request_browser_control_principal.get(),
