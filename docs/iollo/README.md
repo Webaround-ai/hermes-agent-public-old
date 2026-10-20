@@ -88,8 +88,9 @@ skill write, on a turn with actual tool results, excluding skill/memory bookkeep
 successful foreground skill writes. No-tool chatter is skipped; zero disables it. (2026-10-20:
 the 10-18 version reviewed every tool-backed turn, which ran a review after nearly every owner
 turn.) The counter is rebuilt from history at turn start, so a fresh agent per api_server run
-keeps the cadence. A new live turn cancels a review still running on the same session, also
-when the previous turn ran on a different agent instance. Existing budgets and
+keeps the cadence. A review left running by the previous run's agent is not cancelled by the next
+owner turn: the fork holds no session lease, so it never delays the turn, and a memory review
+cancelled at every message would never save (2026-10-20). Existing budgets and
 `skip_background_review` apply. Both native and Codex app-server finalizers share the
 predicate. New `skill_manage(create)` creations are agent-authored in foreground and background;
 existing unknown or owner provenance is never automatically adopted. Pinned, shipped,
