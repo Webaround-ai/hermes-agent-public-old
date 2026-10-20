@@ -1991,6 +1991,10 @@ DEFAULT_CONFIG = {
                 "show_tip", "desktop_project", "close_terminal",
                 "apply_layout", "read_terminal", "read_window_below", "focus_pane",
             ],
+            # Tools that never defer, plugin and MCP tools included (wins over ``defer``): a
+            # deployment's per-turn essentials, so a conversation does not open with
+            # search/describe round trips. Empty = the tiering above decides alone.
+            "eager": [],
         },
         # Remote connector discovery/lifecycle through the Nous tool gateway.
         # The flag is the user's off switch; availability additionally requires

@@ -59,6 +59,26 @@ class TestConfigParsing:
             assert ToolSearchConfig.from_raw({"defer": "todo_list"}).effective_defer_tools == configured
         assert any(r.levelname == "WARNING" for r in caplog.records)
 
+    def test_eager_names_never_defer_and_win_over_defer(self):
+        """``eager`` keeps a deployment's per-turn plugin/MCP tools in the visible array (no
+        search/describe round trip before the first real call), even when ``defer`` names one."""
+        from tools.registry import registry
+        from tools.tool_search import ToolSearchConfig, assemble_tool_defs
+
+        for name, toolset in (("eager_probe_answer", "eagerprobeplugin"),
+                              ("eager_probe_other", "eagerprobeplugin"),
+                              ("mcp_eager_probe_op", "mcp-eager-probe")):
+            registry.register(name=name, handler=lambda args, **kw: "{}",
+                              schema=_td(name, f"desc for {name}"), toolset=toolset)
+        assert ToolSearchConfig.from_raw({"eager": "x"}).eager_tools == frozenset()
+        cfg = ToolSearchConfig.from_raw({"enabled": "on", "defer": ["eager_probe_answer"],
+                                         "eager": ["eager_probe_answer", "mcp_eager_probe_op"]})
+        defs = [_td("eager_probe_answer"), _td("eager_probe_other"), _td("mcp_eager_probe_op")]
+        result = assemble_tool_defs(defs, context_length=200_000, config=cfg)
+        names = {td["function"]["name"] for td in result.tool_defs}
+        assert {"eager_probe_answer", "mcp_eager_probe_op", "tool_search"} <= names
+        assert "eager_probe_other" not in names and result.deferred_count == 1
+
     def test_bool_true_maps_to_auto(self):
         from tools.tool_search import ToolSearchConfig
         cfg = ToolSearchConfig.from_raw(True)
