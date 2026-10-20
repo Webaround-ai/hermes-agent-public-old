@@ -676,7 +676,9 @@ DEFAULT_CONFIG = {
     # (auto = 1h for human-paced sessions — cli/tui/desktop/messaging — and 5m for subagent, cron,
     # oneshot, webhook, kanban, api, tool, batch); other non-falsy values are ignored; falsy (false, null, "off",
     # "disabled", "no", "none") disables caching.
-    "prompt_caching": {"cache_ttl": "5m"},
+    # key_scope: "conversation" (default) or "profile" (Iollo fork: one prompt_cache_key scope for all
+    # of the profile's conversations, so a new conversation hits the cached prompt and tools).
+    "prompt_caching": {"cache_ttl": "5m", "key_scope": "conversation"},
     # OpenRouter settings. response_cache: X-OpenRouter-Cache header — identical requests return
     # cached responses at zero billing; independent of Anthropic prompt caching. response_cache_ttl:
     # seconds (1-86400), only used when response_cache is on. min_coding_score (0.0-1.0):
