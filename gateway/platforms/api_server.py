@@ -2252,8 +2252,11 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
             policy = RoomExecutionPolicy.from_mapping(room_execution_policy or {})
             enabled_toolsets = list(policy.enabled_toolsets)
             max_iterations = policy.max_iterations
-        if max_iterations_cap is not None:  # a run's own cap only lowers the budget (POST /v1/runs max_iterations)
-            max_iterations = min(max_iterations, max_iterations_cap)
+        lift_to = None
+        if max_iterations_cap is not None and max_iterations_cap < max_iterations:
+            # A run's own cap only lowers the budget (POST /v1/runs max_iterations); browser work lifts it back
+            # (agent/turn_tool_round.py): a checkout or booking is many rounds, a lookup is not.
+            lift_to, max_iterations = max_iterations, max_iterations_cap
         # Reasoning resolves against the model that actually runs (per-model overrides), so only
         # after the precedence chain settles; an explicit request wins.
         if request_reasoning_config is None:
@@ -2282,6 +2285,7 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
         if request_service_tier is not _REQUEST_OPTION_MISSING:
             agent_kwargs["service_tier"] = request_service_tier
         agent = AIAgent(**agent_kwargs)
+        agent._round_cap_lift_to = lift_to
         route_source = (
             "session_model_lock" if confirmed_runtime_lock
             else "session_model_override" if session_override
