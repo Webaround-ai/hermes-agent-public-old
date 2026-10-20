@@ -1043,6 +1043,14 @@ async def _execute_run(self, run: _RunLaunch, *, _api_server) -> None:
                 run_id, "message.interim", text=text, already_streamed=bool(already_streamed)))
             _note_progress(self, run_id, "message.interim")
 
+    def _session_wait_cb(elapsed: float) -> None:
+        # Iollo fork: the turn waits for another holder of the session's turn lease (agent/turn_facade_lease.py);
+        # ``run.waiting`` lets the client say so. Content-free: a reason and the seconds waited so far.
+        with suppress(Exception):
+            loop.call_soon_threadsafe(run.put_event, _run_event(
+                run_id, "run.waiting", reason="session_busy", elapsed_s=int(max(0.0, elapsed))))
+            _note_progress(self, run_id, "run.waiting")
+
     def _finish(status: str, extra: Optional[dict] = None, **fields: Any) -> None:
         """Terminal status, then best-effort ``run.<status>`` event; key order is wire shape."""
         extra = extra or {}
@@ -1072,6 +1080,7 @@ async def _execute_run(self, run: _RunLaunch, *, _api_server) -> None:
                 interim_assistant_callback=_interim_cb, **run.agent_kwargs)
         # Iollo fork: tool.generating / run.heartbeat (gateway/platforms/api_server_run_progress.py).
         agent.tool_gen_callback = progress.tool_generating
+        agent.session_wait_callback = lambda elapsed: _session_wait_cb(elapsed)
         pulse_task = loop.create_task(_run_pulse(progress, agent, lambda: _live_status(self, run_id)))
         set_prompt_version(agent, run.prompt_version)
         set_tool_profile(agent, run.tool_profile)

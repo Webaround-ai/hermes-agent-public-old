@@ -267,6 +267,14 @@ def admit_durable_turn_lease(
     def _on_wait(elapsed: float) -> None:
         nonlocal waited
         waited = True
+        # Iollo fork: a host callback (api_server: the run's ``run.waiting`` event) so a client can say the turn is
+        # queued behind another one instead of looking stuck.
+        wait_cb = getattr(agent, "session_wait_callback", None)
+        if callable(wait_cb):
+            try:
+                wait_cb(elapsed)
+            except Exception:
+                logger.debug("session_wait_callback failed", exc_info=True)
         agent._emit_status(
             "⏳ Another Hermes process is using this session; "
             "waiting for it to finish before starting your turn..."
