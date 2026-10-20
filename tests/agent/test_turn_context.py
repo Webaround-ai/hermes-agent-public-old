@@ -518,3 +518,24 @@ def test_prologue_forwards_the_submit_title_preview_to_the_titler():
               "display_metadata": {"title_preview": "Pasted 5000 chars"}}],
         )
     assert titler.call_args.kwargs["title_preview"] == "Pasted 5000 chars"
+
+
+def test_fresh_agent_rebuilds_skill_nudge_counter_from_history():
+    """Regression (2026-10-20): api_server builds a fresh agent per run, so the skill counter
+    restarted at 0 every turn. History since the last skill_manage call carries it over."""
+    from agent.turn_context import _hydrate_from_history
+
+    def assistant(*tools):
+        return {"role": "assistant", "content": "", "tool_calls": [{"function": {"name": t}} for t in tools]}
+
+    history = ([{"role": "user", "content": "a"}, assistant("skill_manage")]
+               + [{"role": "user", "content": "b"}, assistant("terminal"), {"role": "assistant", "content": "ok"}] * 4)
+    agent = types.SimpleNamespace(
+        _todo_store=types.SimpleNamespace(has_items=lambda: True), _user_turn_count=0,
+        _memory_nudge_interval=10, _turns_since_memory=0, _skill_nudge_interval=10, _iters_since_skill=0,
+    )
+    _hydrate_from_history(agent, history)
+    assert agent._iters_since_skill == 8
+    agent._iters_since_skill, agent._skill_nudge_interval, agent._user_turn_count = 0, 3, 0
+    _hydrate_from_history(agent, history)
+    assert agent._iters_since_skill == 8 % 3

@@ -707,6 +707,23 @@ def _hydrate_from_history(agent: Any, conversation_history: Optional[List[Any]])
             agent._user_turn_count = prior_user_turns
             if agent._memory_nudge_interval > 0 and agent._turns_since_memory == 0:
                 agent._turns_since_memory = prior_user_turns % agent._memory_nudge_interval
+            # Same for the skill counter: a host that builds a fresh agent per request (api_server)
+            # would otherwise start every turn at 0. Iterations = assistant rows since skill_manage;
+            # modulo, like memory, so the turn after a review does not fire again at once.
+            skill_interval = getattr(agent, "_skill_nudge_interval", 0)
+            if skill_interval > 0 and getattr(agent, "_iters_since_skill", 0) == 0:
+                agent._iters_since_skill = _iters_since_skill_manage(conversation_history) % skill_interval
+
+
+def _iters_since_skill_manage(history: Any) -> int:
+    iters = 0
+    for m in reversed(history):
+        if m.get("role") != "assistant":
+            continue
+        if any((c.get("function") or {}).get("name") == "skill_manage" for c in m.get("tool_calls") or []):
+            break
+        iters += 1
+    return iters
 
 
 def _tick_memory_nudge(agent: Any) -> bool:
